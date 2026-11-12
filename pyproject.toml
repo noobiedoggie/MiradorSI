@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "miradorsi"
+version = "0.1.0"
+description = "Mirador SI — IA d'analyse construite de zéro, avec accès à internet"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+mirador = "miradorsi.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["miradorsi*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

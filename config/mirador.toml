@@ -1,0 +1,64 @@
+# ============================================================================
+#  Environnement de Mirador SI — configuration simple, à enrichir plus tard.
+#  Les chemins relatifs partent de la racine du projet.
+# ============================================================================
+
+[paths]
+identity = "config/identity.toml"
+corpus = "data/corpus"
+checkpoints = "checkpoints"
+cache = ".cache/web"
+reports = "reports"
+
+# --- Le réseau de neurones (Transformer écrit de zéro) ----------------------
+[model]
+vocab_size = 2048        # taille du vocabulaire BPE (tokens spéciaux compris)
+context_length = 256     # nombre max de tokens vus en même temps
+d_model = 192            # largeur des représentations
+n_layers = 4             # nombre de blocs Transformer
+n_heads = 4              # têtes d'attention par bloc
+mlp_ratio = 4
+seed = 1337
+
+[training]
+steps = 600
+batch_size = 16
+learning_rate = 1e-3
+min_lr_ratio = 0.1
+warmup_steps = 30
+weight_decay = 0.1
+grad_clip = 1.0
+eval_every = 100
+eval_batches = 4
+identity_repeats = 8     # combien de fois répéter les dialogues d'identité
+
+[generation]
+temperature = 0.7
+top_k = 40
+top_p = 0.95
+max_new_tokens = 160
+
+# --- Accès à internet --------------------------------------------------------
+[web]
+user_agent = "MiradorSI/0.1 (agent de recherche)"
+timeout_seconds = 15
+max_bytes = 3_000_000
+retries = 2
+min_delay_seconds = 1.0  # politesse : délai minimal entre deux requêtes au même site
+respect_robots_txt = true
+cache_ttl_hours = 24
+# Moteurs : "duckduckgo", "wikipedia", "searxng" (nécessite searxng_url)
+search_providers = ["duckduckgo", "wikipedia"]
+searxng_url = ""
+wikipedia_languages = ["fr", "en"]
+
+# --- Analyse approfondie -----------------------------------------------------
+[analysis]
+default_depth = 2        # 1 = rapide, 2 = standard, 3 = approfondie
+results_per_query = 8
+max_sources = { 1 = 6, 2 = 12, 3 = 20 }
+max_per_domain = 2
+min_document_chars = 400
+passage_words = 90
+findings = { 1 = 5, 2 = 8, 3 = 12 }
+corroboration_threshold = 0.32
