@@ -113,10 +113,18 @@ def _fill(cls, values: dict):
     return obj
 
 
+def find_config() -> Path:
+    """MIRADOR_CONFIG, sinon ./config/mirador.toml, sinon celui livré avec le projet."""
+    if os.environ.get("MIRADOR_CONFIG"):
+        return Path(os.environ["MIRADOR_CONFIG"])
+    local = Path.cwd() / "config" / "mirador.toml"
+    return local if local.exists() else DEFAULT_CONFIG
+
+
 def load_config(path: str | Path | None = None) -> Config:
-    path = Path(path or os.environ.get("MIRADOR_CONFIG", DEFAULT_CONFIG))
+    path = Path(path) if path else find_config()
     data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    root = path.resolve().parent.parent if path.exists() else PROJECT_ROOT
+    root = path.resolve().parent.parent if path.exists() else Path.cwd()
     cfg = Config(
         root=root,
         paths=_fill(PathsConfig, data.get("paths", {})),

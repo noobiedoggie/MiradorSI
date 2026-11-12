@@ -74,3 +74,14 @@ def test_tokenizer_roundtrip_and_specials(tmp_path):
     tok.save(tmp_path / "tok.json")
     again = BPETokenizer.load(tmp_path / "tok.json")
     assert again.encode(sample_text) == ids
+
+
+def test_brain_reply_uses_dialogue_format():
+    from miradorsi.config import GenerationConfig
+    from miradorsi.model.brain import Brain
+
+    tok = BPETokenizer.train("Bonjour, je suis Mirador SI. " * 30, vocab_size=300)
+    cfg = ModelConfig(vocab_size=tok.vocab_size, context_length=64, d_model=32, n_layers=1, n_heads=2)
+    brain = Brain(MiradorLM(cfg), tok, GenerationConfig(max_new_tokens=12))
+    answer = brain.reply("Bonjour", history=[("Salut", "Bonjour !")] * 20)  # historique tronqué
+    assert isinstance(answer, str) and "<|" not in answer

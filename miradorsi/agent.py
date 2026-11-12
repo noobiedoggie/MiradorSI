@@ -81,13 +81,15 @@ class MiradorAgent:
 
     # ------------------------------------------------------------------ actions
     def chat(self, message: str) -> str:
+        remembered, score = self._identity_memory(message)
         if self.brain is not None:
             answer = self.brain.reply(message, self.history)
             if answer:
                 self.history.append((message, answer))
+                if score < 0.3 and message.rstrip().endswith("?"):
+                    answer += "\n(Réponse générée sans vérification. Pour une réponse sourcée : /analyse …)"
                 return answer
-        remembered = self._identity_memory(message)
-        if remembered:
+        if remembered and score >= 0.5:
             return remembered
         if self.brain is None:
             return ("Mon réseau de neurones n'est pas encore entraîné (lance `mirador train`). "
@@ -126,8 +128,8 @@ class MiradorAgent:
         return path
 
     # ------------------------------------------------------------------ interne
-    def _identity_memory(self, message: str) -> str | None:
-        """Sans modèle entraîné : retrouve la réponse d'identité la plus proche."""
+    def _identity_memory(self, message: str) -> tuple[str | None, float]:
+        """Réponse d'identité la plus proche du message, et sa similarité (0 à 1)."""
         terms = set(content_terms(message))
         best, best_score = None, 0.0
         for question, answer in self.identity.training_dialogues():
@@ -139,7 +141,7 @@ class MiradorAgent:
                 score = len(terms & q_terms) / len(terms | q_terms) if terms else 0.0
             if score > best_score:
                 best, best_score = answer, score
-        return best if best_score >= 0.5 else None
+        return best, best_score
 
 
 def _parse_depth(text: str) -> tuple[str, int | None]:
