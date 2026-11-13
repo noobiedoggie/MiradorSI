@@ -26,10 +26,12 @@ android {
             abiFilters += abis
         }
         // Moteur natif des modèles ouverts (llama.cpp), toujours optimisé : en mode debug, il serait
-        // des dizaines de fois plus lent.
+        // des dizaines de fois plus lent. Bibliothèque C++ intégrée (c++_static) : Chaquopy livre
+        // déjà un libc++_shared.so plus ancien, incompatible avec celui du NDK récent. Le moteur
+        // n'échange que des types C entre ses bibliothèques (API C de llama.cpp et ggml).
         externalNativeBuild {
             cmake {
-                arguments += listOf("-DCMAKE_BUILD_TYPE=Release", "-DANDROID_STL=c++_shared")
+                arguments += listOf("-DCMAKE_BUILD_TYPE=Release", "-DANDROID_STL=c++_static")
             }
         }
     }

@@ -17,4 +17,5 @@ curl -sSfL --retry 3 -o "$TMP/source.tar.gz" "$URL"
 echo "$EMPREINTE  $TMP/source.tar.gz" | sha256sum -c -
 tar xzf "$TMP/source.tar.gz" -C "$TMP" "llama_cpp_python-$VERSION/vendor/llama.cpp"
 mv "$TMP/llama_cpp_python-$VERSION/vendor/llama.cpp" "$CIBLE"
+rm -f "$CIBLE/.git"  # pointeur de sous-module sans dépôt : CMake essaierait de l'interroger
 echo "llama.cpp installé dans $CIBLE"
