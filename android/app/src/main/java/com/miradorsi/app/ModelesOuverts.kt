@@ -61,6 +61,10 @@ object Catalogue {
 object MoteurNatif {
     @Volatile private var pret: Boolean? = null
 
+    /** Raison de l'échec du chargement de la bibliothèque native, s'il y en a eu un. */
+    @Volatile var erreurChargement: String = ""
+        private set
+
     /** Charge la bibliothèque native une seule fois ; false si elle manque (appareil non pris en charge). */
     fun disponible(context: Context): Boolean {
         pret?.let { return it }
@@ -71,6 +75,8 @@ object MoteurNatif {
                 initialiser(context.applicationInfo.nativeLibraryDir)
                 true
             } catch (e: Throwable) {
+                erreurChargement = e.toString()
+                android.util.Log.e("MiradorSI", "moteur natif indisponible", e)
                 false
             }
             pret = ok

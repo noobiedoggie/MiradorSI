@@ -89,7 +89,10 @@ jobs:
       # Compilation avant de lancer l'émulateur (le moteur natif prend quelques minutes) ;
       # x86_64 seulement, l'architecture de l'émulateur.
       - name: Compiler l'appli et les tests (x86_64)
-        run: gradle -p android -Pabis=x86_64 assembleDebug assembleDebugAndroidTest --stacktrace
+        run: |
+          gradle -p android -Pabis=x86_64 assembleDebug assembleDebugAndroidTest --stacktrace
+          echo "Bibliothèques natives de l'APK :"
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep '\.so$' | grep -v chaquopy || true
 
       - name: Activer KVM (accélération de l'émulateur)
         run: |
