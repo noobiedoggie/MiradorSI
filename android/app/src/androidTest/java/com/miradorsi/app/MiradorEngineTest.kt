@@ -29,6 +29,16 @@ class MiradorEngineTest {
     }
 
     @Test
+    fun calculeEtResteHonneteHorsLigne() = runBlocking {
+        engine.start()
+        assertEquals("1 + 1 = 2", engine.ask("1+1", Mode.LOCAL, 1, emptyList()).text)
+        assertTrue(engine.ask("yo", Mode.ANALYSE, 1, emptyList()).text.startsWith("Salut"))
+        assertTrue(engine.ask("connard", Mode.LOCAL, 1, emptyList()).text.startsWith("Je reste poli"))
+        val inconnu = engine.ask("j'aime le caca et toi?", Mode.LOCAL, 1, emptyList()).text
+        assertTrue(inconnu, inconnu.contains("Analyse"))
+    }
+
+    @Test
     fun analyseNeJamaisPlanter() = runBlocking {
         engine.start()
         // Avec ou sans internet sur l'émulateur, l'analyse doit répondre proprement.

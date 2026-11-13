@@ -20,12 +20,12 @@ repetition_penalty = 1.15
 user_agent = "MiradorSI/0.4 (agent de recherche open source, Android) Python-urllib"
 timeout_seconds = 15
 max_bytes = 3_000_000
-retries = 3
-max_retry_wait_seconds = 30
+retries = 2
+max_retry_wait_seconds = 10   # sur téléphone : mieux vaut passer à la source suivante
 min_delay_seconds = 1.0
 respect_robots_txt = true
 cache_ttl_hours = 24
-search_providers = ["duckduckgo", "wikipedia"]
+search_providers = ["wikipedia", "duckduckgo"]
 wikipedia_languages = ["fr", "en"]
 
 [analysis]

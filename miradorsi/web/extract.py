@@ -155,7 +155,7 @@ def strip_tags(fragment: str) -> str:
 # Sections de fin d'article (Wikipédia et autres) : listes de références, pas du contenu.
 _TAIL_SECTIONS = re.compile(r"\n(Notes et références|Références|Notes|Voir aussi|Bibliographie|Liens externes|"
                             r"Articles connexes|Annexes|Sources|References|See also|Further reading|"
-                            r"External links)\n", re.I)
+                            r"External links)(?:\n|$)", re.I)
 
 
 def strip_reference_sections(text: str) -> str:

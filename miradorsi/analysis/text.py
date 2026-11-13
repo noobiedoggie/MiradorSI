@@ -37,7 +37,7 @@ QUESTION_WORDS = {"quoi", "quel", "quelle", "quels", "quelles", "comment", "pour
 _WORD_RE = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
 _ABBREVIATIONS = {"m", "mm", "mme", "mlle", "dr", "pr", "st", "etc", "ex", "cf", "p", "pp", "vol",
                   "no", "n", "fig", "mr", "mrs", "ms", "prof", "inc", "ltd", "jr", "sr", "vs",
-                  "env", "av", "apr", "j.-c", "e.g", "i.e", "u.s", "art"}
+                  "env", "av", "apr", "j.-c", "e.g", "i.e", "u.s", "art", "hab"}
 
 
 def strip_accents(text: str) -> str:
@@ -65,6 +65,15 @@ def light_stem(word: str) -> str:
 
 def words(text: str) -> list[str]:
     return _WORD_RE.findall(text)
+
+
+_IDIOMS = re.compile(r"\b(?:a|ont|avait|avaient|aura|auront|aurait|avoir|va avoir)\s+(?:eu\s+)?lieu\b|"
+                     r"\bse (?:passe|passait|trouve|situe)\b", re.I)
+
+
+def strip_idioms(question: str) -> str:
+    """Retire les tournures dont les mots ne sont pas le sujet : « a eu lieu » ne parle pas d'un lieu."""
+    return _IDIOMS.sub(" ", question)
 
 
 def content_terms(text: str, stem: bool = True) -> list[str]:
@@ -119,7 +128,10 @@ def split_sentences(text: str) -> list[str]:
 
 def chunk_words(text: str, size: int = 90, overlap: int = 20) -> list[str]:
     """Découpe un texte en passages d'environ `size` mots, alignés sur les phrases."""
-    sentences = split_sentences(text)
+    # Les titres de section (lignes courtes sans ponctuation finale) sont écartés : recollés au
+    # passage, ils se fondraient dans la phrase suivante (« Histoire Lyon est fondée… »).
+    sentences = [s for s in split_sentences(text)
+                 if s.rstrip()[-1:] in ".!?…:;»" or len(s.split()) > 12]
     chunks, current, count = [], [], 0
     for sentence in sentences:
         n = len(sentence.split())

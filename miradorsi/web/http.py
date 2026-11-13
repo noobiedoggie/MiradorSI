@@ -139,7 +139,7 @@ class WebClient:
                 last_error = exc
                 if attempt < self.cfg.retries:
                     time.sleep(min(2 ** attempt, 8) * 0.5)
-        raise WebError(f"Échec de {url} : {last_error}")
+        raise WebError(f"Échec de {url} : {last_error}") from last_error
 
     # ------------------------------------------------------------ interne
     def _request(self, url: str, headers: dict, max_bytes: int) -> HttpResponse:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -63,39 +64,64 @@ def ask(message: str, mode: str, depth: int = 2, history_json: str = "[]") -> st
     if _agent is None:
         return json.dumps({"text": "Mirador SI démarre encore, réessaie dans un instant.", "sources": []})
     try:
+        # calculs, salutations, politesse, questions sur Mirador : réponse directe, sans internet
+        quick = _agent.quick_reply(message)
+        if quick:
+            return json.dumps({"text": _app_wording(quick), "sources": []}, ensure_ascii=False)
         if mode == "analyse":
             return json.dumps(_analyse(message, int(depth)), ensure_ascii=False)
         _agent.history = [tuple(pair) for pair in json.loads(history_json)][-4:]
-        return json.dumps({"text": _agent.handle(message), "sources": []}, ensure_ascii=False)
+        return json.dumps({"text": _app_wording(_agent.handle(message)), "sources": []}, ensure_ascii=False)
     except Exception as exc:  # l'application ne doit jamais planter sur une erreur Python
         return json.dumps({"text": f"Désolé, une erreur est survenue : {exc}", "sources": []},
                           ensure_ascii=False)
 
 
+def _app_wording(text: str) -> str:
+    """Les réponses parlent des commandes de la console (/analyse) : dans l'appli, c'est la loupe."""
+    return (text.replace("Utilise la commande /analyse suivie de ta question.",
+                         "Passe en mode Analyse (la loupe) et pose ta question.")
+                .replace("Pour une réponse sourcée : /analyse …", "Pour une réponse sourcée : mode Analyse (la loupe)"))
+
+
 def _analyse(question: str, depth: int) -> dict:
+    from miradorsi.analysis.answer import compose_answer
+
     report = _agent.analyzer.analyze(question, depth)
     if not report.findings:
-        incidents = "\n".join(f"• {e}" for e in report.errors[:3])
+        incidents = "\n".join(f"• {e}" for e in explain_errors(report.errors))
         text = ("Je n'ai pas pu collecter d'information exploitable. Vérifie la connexion internet "
                 "ou reformule la question.")
         return {"text": text + (f"\n\n{incidents}" if incidents else ""), "sources": []}
 
-    def cite(ids):
-        return "".join(f"[{i}]" for i in ids)
-
-    best = sorted(report.findings, key=lambda f: -f.confidence)[:3]
-    lines = ["Synthèse", " ".join(f"{f.text} {cite(f.citations)}" for f in best), "", "Constats"]
-    for i, f in enumerate(report.findings, 1):
-        lines.append(f"{i}. {f.text} {cite(f.citations)} — confiance {f.confidence_label}")
-    if report.corroborated:
-        lines += ["", "Chiffres confirmés par plusieurs sites"]
-        for g in report.corroborated[:4]:
-            values = " / ".join(sorted({f.display() for f in g.facts}))
-            lines.append(f"• {values} ({', '.join(g.context[:4])}) {cite(g.source_ids)}")
-    if report.divergent:
-        lines += ["", f"⚠ {len(report.divergent)} divergence(s) de chiffres entre sources : à vérifier."]
-    lines += ["", f"{len(report.sources)} sources lues · {len(report.queries)} recherches · "
-                  f"{report.duration_seconds:.0f} s"]
+    text = compose_answer(report)
     sources = [{"id": s.id, "title": s.title, "url": s.url, "domain": s.domain,
                 "reliability": s.credibility.label} for s in report.sources]
-    return {"text": "\n".join(lines), "sources": sources}
+    return {"text": text, "sources": sources}
+
+
+def explain_errors(errors: list[str], limit: int = 3) -> list[str]:
+    """Traduit les erreurs techniques (URL, codes HTTP) en phrases courtes, sans doublons."""
+    out: list[str] = []
+    for error in errors:
+        host = re.search(r"https?://(?:www\.)?([^/\s:]+)", error)
+        site = host.group(1) if host else error.split(" :", 1)[0].strip()
+        site = "Wikipédia" if site.endswith("wikipedia.org") else site
+        if "anti-robot" in error:
+            text = "DuckDuckGo bloque les recherches automatiques pour le moment"
+        elif "HTTP 429" in error:
+            text = f"{site} reçoit trop de requêtes depuis ton réseau : réessaie dans une minute"
+        elif re.search(r"HTTP 40[13]", error):
+            text = f"{site} refuse l'accès"
+        elif re.search(r"HTTP 5\d\d", error):
+            text = f"{site} est en panne pour le moment"
+        elif re.search(r"timed out|timeout|Network is unreachable|Name or service|"
+                       r"No address|getaddrinfo|Temporary failure|Connection (refused|reset)", error, re.I):
+            text = f"{site} est injoignable : vérifie la connexion internet"
+        elif "robots.txt" in error:
+            text = f"{site} interdit la lecture automatique"
+        else:
+            text = re.sub(r"https?://\S+", site, error)[:160]
+        if text not in out:
+            out.append(text)
+    return out[:limit]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -10,9 +11,11 @@ from typing import Protocol
 
 from ..config import WebConfig
 from .extract import Document, domain_of, extract_html, strip_reference_sections, strip_tags
-from .http import WebClient, WebError
+from .http import HttpStatusError, WebClient, WebError
+from .wikitext import wikipedia_html_to_text, wikitext_to_text
 
 TRACKING_PARAMS = re.compile(r"^(utm_|fbclid|gclid|mc_|ref$|ref_src)")
+_WIKI_REDIRECT = re.compile(r"\s*#\s*REDIRECT\w*\s*:?\s*\[\[([^\]|#]+)", re.I)
 
 
 @dataclass
@@ -123,7 +126,36 @@ class DuckDuckGoSearch:
 
 
 # ---------------------------------------------------------------- Wikipédia
+def wikipedia_url(lang: str, title: str) -> str:
+    return f"https://{lang}.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+
+
+_WIKI_RESULT = re.compile(
+    r'class="mw-search-result-heading"[^>]*>\s*<a\b[^>]*?href="/wiki/[^"]+"[^>]*?title="([^"]+)"'
+    r'(?:(?!mw-search-result-heading).)*?class="searchresult"[^>]*>(.*?)</div>', re.S)
+
+
+def parse_wikipedia_search_html(page: str, lang: str) -> list[SearchResult]:
+    """Résultats de la page de recherche de Wikipédia (Spécial:Recherche)."""
+    results = []
+    for title, snippet in _WIKI_RESULT.findall(page):
+        title = html.unescape(title)
+        results.append(SearchResult(title, wikipedia_url(lang, title), strip_tags(snippet),
+                                    "wikipedia", len(results) + 1))
+    return results
+
+
+_SEARCH_PAGE = {"fr": "Spécial:Recherche", "de": "Spezial:Suche", "es": "Especial:Buscar"}  # évite une redirection
+
+
 class WikipediaSearch:
+    """Recherche dans Wikipédia.
+
+    Les API de Wikimédia limitent fortement les adresses IP partagées (réseaux mobiles,
+    serveurs) : « HTTP 429, trop de requêtes » dès la première requête. La page de recherche
+    ordinaire du site ne l'est pas ; on la lit d'abord et l'API ne sert qu'en secours.
+    """
+
     name = "wikipedia"
 
     def __init__(self, client: WebClient, languages: list[str] | None = None):
@@ -133,26 +165,44 @@ class WikipediaSearch:
     def search(self, query: str, max_results: int = 8, lang: str = "fr") -> list[SearchResult]:
         langs = [lang] + [l for l in self.languages if l != lang] if lang in self.languages else self.languages
         results: list[SearchResult] = []
-        per_lang = max(2, max_results // max(1, len(langs)))
+        per_lang = max_results
         failures: list[str] = []
         for code in langs:
+            if code != langs[0] and len(results) >= 2:
+                break  # la langue de la question suffit : une réponse française reste en français
             try:  # une langue en panne ne doit pas faire perdre les résultats des autres
-                resp = self.client.get(f"https://{code}.wikipedia.org/w/api.php", check_robots=False, params={
-                    "action": "query", "list": "search", "srsearch": query, "srlimit": per_lang,
-                    "format": "json", "utf8": 1,
-                })
-                items = resp.json().get("query", {}).get("search", [])
-            except (WebError, ValueError) as exc:
-                failures.append(f"{code} : {exc}")
-                continue
-            for item in items:
-                title = item["title"]
-                url = f"https://{code}.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
-                results.append(SearchResult(title, url, strip_tags(item.get("snippet", "")),
-                                            "wikipedia", len(results) + 1))
+                found = self._search_page(code, query, per_lang)
+            except WebError as page_error:
+                try:
+                    found = self._search_api(code, query, per_lang)
+                except (WebError, ValueError) as exc:
+                    failures.append(f"{code} : {page_error if isinstance(exc, ValueError) else exc}")
+                    continue
+            for item in found[:per_lang]:
+                item.rank = len(results) + 1
+                results.append(item)
         if failures and len(failures) == len(langs):
             raise WebError("; ".join(failures))
         return results[:max_results]
+
+    def _search_page(self, code: str, query: str, limit: int) -> list[SearchResult]:
+        resp = self.client.get(f"https://{code}.wikipedia.org/w/index.php", check_robots=False, params={
+            "search": query, "title": _SEARCH_PAGE.get(code, "Special:Search"), "profile": "default", "fulltext": 1,
+            "ns0": 1, "limit": limit,
+        })
+        results = parse_wikipedia_search_html(resp.text, code)
+        if not results and "mw-search-nonefound" not in resp.text and "searchresult" not in resp.text:
+            raise WebError(f"page de recherche de Wikipédia ({code}) illisible")
+        return results
+
+    def _search_api(self, code: str, query: str, limit: int) -> list[SearchResult]:
+        resp = self.client.get(f"https://{code}.wikipedia.org/w/api.php", check_robots=False, params={
+            "action": "query", "list": "search", "srsearch": query, "srlimit": limit,
+            "format": "json", "utf8": 1,
+        })
+        return [SearchResult(item["title"], wikipedia_url(code, item["title"]),
+                             strip_tags(item.get("snippet", "")), "wikipedia")
+                for item in resp.json().get("query", {}).get("search", [])]
 
 
 # ---------------------------------------------------------------- SearXNG
@@ -236,6 +286,44 @@ class Fetcher:
         return doc
 
     def _fetch_wikipedia(self, url: str, lang: str, title: str) -> Document:
+        """Lit l'article rendu (index.php?action=render) : pas limité comme l'API, et complet
+        (chiffres calculés par les modèles, fiche résumé). En secours : le wikitexte, puis l'API."""
+        title = title.replace("_", " ")
+        try:
+            resp = self.client.get(f"https://{lang}.wikipedia.org/w/index.php", check_robots=False,
+                                   params={"title": title, "action": "render"})
+            text = strip_reference_sections(wikipedia_html_to_text(resp.text, title))
+            if len(text) >= 200:
+                return Document(url=wikipedia_url(lang, title), title=title, text=text, language=lang,
+                                published=resp.headers.get("last-modified", ""))
+        except WebError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, HttpStatusError) and cause.status == 404:
+                raise WebError(f"Article Wikipédia introuvable : {title}") from exc
+        return self._fetch_wikipedia_source(url, lang, title)
+
+    def _fetch_wikipedia_source(self, url: str, lang: str, title: str) -> Document:
+        """Le wikitexte de l'article (index.php?action=raw), en suivant les redirections."""
+        try:
+            for _ in range(3):  # suit au plus deux redirections (#REDIRECTION [[…]])
+                resp = self.client.get(f"https://{lang}.wikipedia.org/w/index.php", check_robots=False,
+                                       params={"title": title, "action": "raw"})
+                redirect = _WIKI_REDIRECT.match(resp.text)
+                if not redirect:
+                    break
+                title = redirect.group(1).strip().replace("_", " ")
+        except WebError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, HttpStatusError) and cause.status == 404:
+                raise WebError(f"Article Wikipédia introuvable : {title}") from exc
+            return self._fetch_wikipedia_api(url, lang, title)  # en secours
+        text = strip_reference_sections(wikitext_to_text(resp.text))
+        if not text:
+            raise WebError(f"Article Wikipédia vide : {title}")
+        return Document(url=wikipedia_url(lang, title), title=title, text=text, language=lang,
+                        published=resp.headers.get("last-modified", ""))
+
+    def _fetch_wikipedia_api(self, url: str, lang: str, title: str) -> Document:
         resp = self.client.get(f"https://{lang}.wikipedia.org/w/api.php", check_robots=False, params={
             "action": "query", "prop": "extracts|info", "explaintext": 1, "redirects": 1,
             "titles": title.replace("_", " "), "format": "json", "utf8": 1, "inprop": "url",

@@ -183,3 +183,94 @@ def test_wikipedia_search_survives_one_language_failing():
 
     results = WikipediaSearch(Client(), ["fr", "en"]).search("tour Eiffel", 4, "fr")
     assert [r.title for r in results] == ["Tour Eiffel"] and results[0].snippet == "324 mètres"
+
+
+_SEARCH_PAGE = """<ul class="mw-search-results"><li class="mw-search-result mw-search-result-ns-0">
+<div class="searchResultImage-text"><div class="mw-search-result-heading"><a href="/wiki/Fusion_nucl%C3%A9aire"
+ title="Fusion nucléaire" data-serp-pos="0"><span class="searchmatch">Fusion</span> nucléaire</a></div>
+<div class="searchresult">La <span class="searchmatch">fusion</span> d&#039;atomes légers...</div></div></li>
+<li class="mw-search-result"><div class="mw-search-result-heading"><a href="/wiki/Tokamak" title="Tokamak">Tokamak</a>
+</div><div class="searchresult">Un tokamak est une chambre...</div></li></ul>"""
+
+
+def test_parse_wikipedia_search_page():
+    from miradorsi.web.search import parse_wikipedia_search_html
+
+    results = parse_wikipedia_search_html(_SEARCH_PAGE, "fr")
+    assert [r.title for r in results] == ["Fusion nucléaire", "Tokamak"]
+    assert results[0].url == "https://fr.wikipedia.org/wiki/Fusion_nucl%C3%A9aire"
+    assert results[0].snippet == "La fusion d'atomes légers..." and results[1].rank == 2
+
+
+def test_wikipedia_search_reads_the_search_page_before_the_api():
+    from miradorsi.web.http import HttpResponse
+    from miradorsi.web.search import WikipediaSearch
+
+    calls = []
+
+    class Client:
+        def get(self, url, params=None, **kw):
+            calls.append(url)
+            if "api.php" in url:
+                raise WebError("HTTP 429 sur l'API")  # l'API limitée ne doit pas être nécessaire
+            return HttpResponse(url, 200, {"content-type": "text/html"}, _SEARCH_PAGE.encode())
+
+    results = WikipediaSearch(Client(), ["fr"]).search("fusion nucléaire", 4, "fr")
+    assert [r.title for r in results] == ["Fusion nucléaire", "Tokamak"]
+    assert all("index.php" in url for url in calls)
+
+
+def test_fetch_wikipedia_reads_wikitext_and_follows_redirects():
+    from miradorsi.web.http import HttpResponse, HttpStatusError
+    from miradorsi.web.search import Fetcher
+
+    pages = {"Einstein": "#REDIRECTION [[Albert Einstein#Jeunesse]]",
+             "Albert Einstein": "'''Albert Einstein''' est un [[physicien]].\n== Travaux ==\n"
+                                "L''''énergie''' de masse.\n== Notes et références ==\n<references/>"}
+    seen = []
+
+    class Client:
+        def get(self, url, params=None, **kw):
+            seen.append(url)
+            title = (params or {}).get("title")
+            if "api.php" in url:
+                data = {"query": {"pages": {"1": {"title": "Repli", "extract": "Texte de l'API."}}}}
+                return HttpResponse(url, 200, {}, __import__("json").dumps(data).encode())
+            if title == "Panne":
+                raise WebError("Échec : HTTP 429") from HttpStatusError(429, url)
+            if title not in pages:
+                raise WebError("Échec : HTTP 404") from HttpStatusError(404, url)
+            return HttpResponse(url, 200, {"last-modified": "Sat, 24 Oct 2026 14:23:17 GMT"},
+                                pages[title].encode())
+
+    doc = Fetcher(Client()).fetch("https://fr.wikipedia.org/wiki/Einstein")
+    assert doc.title == "Albert Einstein" and doc.url == "https://fr.wikipedia.org/wiki/Albert_Einstein"
+    assert doc.text.startswith("Albert Einstein est un physicien.") and "L'énergie de masse." in doc.text
+    assert "références" not in doc.text and doc.published.startswith("Sat")
+    assert not any("api.php" in url for url in seen)
+    with pytest.raises(WebError, match="introuvable"):
+        Fetcher(Client()).fetch("https://fr.wikipedia.org/wiki/Inexistant")
+    assert Fetcher(Client()).fetch("https://fr.wikipedia.org/wiki/Panne").text == "Texte de l'API."
+
+
+def test_wikipedia_html_to_text_keeps_numbers_and_fiche():
+    from miradorsi.web.wikitext import wikipedia_html_to_text
+
+    page = """<div class="mw-parser-output"><section><div class="bandeau-container homonymie">Pour les
+    articles homonymes, voir Lyon (homonymie).</div>
+    <table class="infobox_v2 infobox"><tr><th colspan="2">Lyon</th></tr>
+    <tr><th>Population<br/>municipale</th><td>519&#160;127 hab. (2023)</td></tr>
+    <tr><th>Superficie</th><td>47,87 km<sup>2</sup></td></tr></table>
+    <p><b>Lyon</b> est une commune<sup class="mw-ref reference"><a>[1]</a></sup> fondée au I<sup>er</sup> siècle
+    av. J.-C.[réf. nécessaire] Elle compte <span class="nowrap">519 127</span> habitants.</p>
+    <figure><figcaption>Une légende</figcaption></figure><style>.x{}</style>
+    </section><section><div class="mw-heading"><h2>Histoire</h2></div><p>Texte de l'histoire.</p>
+    <table class="wikitable"><tr><td>tableau ignoré</td></tr></table></section></div>"""
+    text = wikipedia_html_to_text(page, "Lyon")
+    lines = text.split("\n")
+    assert lines[0] == "Lyon est une commune fondée au Ier siècle av. J.-C. Elle compte 519 127 habitants."
+    assert "Lyon — Population municipale : 519 127 hab. (2023)." in lines
+    assert "Lyon — Superficie : 47,87 km2." in lines
+    assert lines.index("Histoire") > lines.index("Lyon — Superficie : 47,87 km2.")  # fiche après l'introduction
+    for noise in ("[1]", "homonymes", "légende", "tableau ignoré", ".x{", "réf."):
+        assert noise not in text

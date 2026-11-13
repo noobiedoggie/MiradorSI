@@ -73,7 +73,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -450,7 +454,7 @@ private fun Message(m: ChatMessage) {
             Text("Mirador SI", color = Texte2, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
         Spacer(Modifier.height(6.dp))
-        Text(m.text, color = Texte, fontSize = 16.sp, lineHeight = 23.sp)
+        Text(miseEnForme(m.text), color = Texte, fontSize = 16.sp, lineHeight = 23.sp)
         if (m.sources.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Text("Sources", color = Texte2, fontSize = 14.sp, fontWeight = FontWeight.Medium)
@@ -469,6 +473,26 @@ private fun Message(m: ChatMessage) {
                 }
             }
         }
+    }
+}
+
+/** « ## Titre » en intertitre, renvois [1] [2] aux sources en couleur. */
+private fun miseEnForme(texte: String): AnnotatedString = buildAnnotatedString {
+    texte.lines().forEachIndexed { i, ligne ->
+        if (i > 0) append("\n")
+        if (ligne.startsWith("## ")) {
+            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, fontSize = 17.sp)) { append(ligne.removePrefix("## ")) }
+            return@forEachIndexed
+        }
+        var debut = 0
+        Regex("\\[\\d+]").findAll(ligne).forEach { renvoi ->
+            append(ligne.substring(debut, renvoi.range.first))
+            withStyle(SpanStyle(color = SarcelleClaire, fontSize = 13.sp, fontWeight = FontWeight.Medium)) {
+                append(renvoi.value)
+            }
+            debut = renvoi.range.last + 1
+        }
+        append(ligne.substring(debut))
     }
 }
 

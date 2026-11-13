@@ -91,6 +91,7 @@ class AnalysisConfig:
     results_per_query: int = 8
     max_sources: dict[int, int] = field(default_factory=lambda: {1: 6, 2: 12, 3: 20})
     max_per_domain: int = 2
+    max_per_encyclopedia: int = 5  # articles distincts d'une encyclopédie (Wikipédia)
     min_document_chars: int = 400
     passage_words: int = 90
     findings: dict[int, int] = field(default_factory=lambda: {1: 5, 2: 8, 3: 12})

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import re
 from pathlib import Path
 from typing import Callable
@@ -11,6 +10,7 @@ from ..analysis.text import strip_accents
 from ..web.extract import strip_reference_sections
 from ..web.http import WebClient, WebError
 from ..web.search import Fetcher, WikipediaSearch
+from ..web.wikitext import wikitext_to_text
 
 
 def slugify(text: str) -> str:
@@ -63,99 +63,6 @@ def build_web_corpus(topics: list[str], wiki: WikipediaSearch, fetcher: Fetcher,
 
 
 # ---------------------------------------------------------------- collecte groupée
-def _strip_nested(text: str, opening: str, closing: str) -> str:
-    """Retire les blocs imbriqués {{…}} ou {|…|} (modèles, tableaux)."""
-    out, depth, i, n = [], 0, 0, len(text)
-    while i < n:
-        if text.startswith(opening, i):
-            depth += 1
-            i += len(opening)
-        elif depth and text.startswith(closing, i):
-            depth -= 1
-            i += len(closing)
-        else:
-            if not depth:
-                out.append(text[i])
-            i += 1
-    return "".join(out)
-
-
-_MEDIA_LINK = re.compile(r"\[\[(?:Fichier|File|Image|Catégorie|Category|Media):", re.I)
-
-
-def _strip_media_links(text: str) -> str:
-    """Retire [[Fichier:…]] et [[Catégorie:…]], dont la légende peut contenir d'autres liens."""
-    out, pos = [], 0
-    for match in _MEDIA_LINK.finditer(text):
-        if match.start() < pos:
-            continue
-        out.append(text[pos:match.start()])
-        depth, i = 0, match.start()
-        while i < len(text):
-            if text.startswith("[[", i):
-                depth += 1
-                i += 2
-            elif text.startswith("]]", i):
-                depth -= 1
-                i += 2
-                if depth == 0:
-                    break
-            else:
-                i += 1
-        pos = i
-    out.append(text[pos:])
-    return "".join(out)
-
-
-_INLINE_TEMPLATE = re.compile(r"\{\{\s*([^{}|]+?)\s*\|([^{}]*)\}\}")
-_SUFFIX_TEMPLATE = re.compile(r"\{\{\s*(1er|1re|er|re|e|ème|nd|nde)\s*\}\}", re.I)
-
-
-def _inline_template(match: re.Match) -> str:
-    """Garde le contenu des modèles courants ({{unité|…}}, {{date|…}}, {{s|XIX}}…)."""
-    name = match.group(1).strip().lower()
-    args = [a.strip() for a in match.group(2).split("|") if a.strip() and "=" not in a]
-    if not args:
-        return ""
-    if name in ("nb", "formatnum", "num", "dts", "nobr", "nowrap", "monnaie") or \
-            name.startswith(("unité", "nombre", "date", "heure")):
-        return " ".join(args)
-    if name in ("s", "siècle", "sp", "s-"):
-        return f"{args[0]}e siècle"
-    if name in ("lang", "langue", "citation", "japonais", "lien", "ill", "lien web", "abréviation", "sigle"):
-        return args[-1] if name not in ("lien", "ill") else args[0]
-    return match.group(0)  # modèle inconnu : retiré ensuite
-
-
-def wikitext_to_text(wikitext: str) -> str:
-    """Convertit le wikitexte d'un article en texte brut lisible."""
-    s = re.sub(r"<!--.*?-->", "", wikitext, flags=re.S)
-    s = _SUFFIX_TEMPLATE.sub(lambda m: m.group(1), s)
-    for _ in range(2):  # modèles imbriqués simples : de l'intérieur vers l'extérieur
-        s = _INLINE_TEMPLATE.sub(_inline_template, s)
-    s = re.sub(r"<ref[^>]*/>", "", s)
-    s = re.sub(r"<ref[^>]*>.*?</ref>", "", s, flags=re.S | re.I)
-    s = re.sub(r"<(gallery|math|timeline|syntaxhighlight|source|score|graph)[^>]*>.*?</\1>", "", s,
-               flags=re.S | re.I)
-    s = _strip_nested(s, "{{", "}}")
-    s = _strip_nested(s, "{|", "|}")
-    s = _strip_media_links(s)
-    s = re.sub(r"\[\[(?:[^\[\]|]*\|)?([^\[\]]*)\]\]", r"\1", s)          # [[cible|texte]] → texte
-    s = re.sub(r"\[https?://[^\s\]]+\s+([^\]]+)\]", r"\1", s)              # [url texte] → texte
-    s = re.sub(r"\[https?://[^\]]+\]", "", s)
-    s = re.sub(r"'{2,}", "", s)                                                  # gras, italique
-    s = re.sub(r"^=+\s*(.*?)\s*=+\s*$", r"\n\1\n", s, flags=re.M)             # titres de section
-    s = re.sub(r"<[^>]+>", "", s)
-    s = re.sub(r"^[*#:;]+\s*", "", s, flags=re.M)                               # puces de listes
-    s = re.sub(r"__[A-ZÉ]+__", "", s)
-    s = html.unescape(s).replace("\u00a0", " ")
-    s = re.sub(r"[ \t]+", " ", s)
-    s = re.sub(r" +([,.;:)])", r"\1", s)
-    s = re.sub(r"\(\s*[,;]?\s*\)", "", s)                                        # parenthèses vidées
-    s = re.sub(r"\n\s*\n\s*\n+", "\n\n", s)
-    return s.strip()
-
-
 def fetch_wikipedia_bulk(client: WebClient, titles: list[str], lang: str = "fr",
                          batch: int = 10) -> dict[str, tuple[str, str]]:
     """Récupère plusieurs articles par requête : {titre demandé: (titre réel, wikitexte)}."""

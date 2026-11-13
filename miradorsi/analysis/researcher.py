@@ -30,7 +30,8 @@ from ..web.search import SearchResult, normalize_url
 from . import credibility
 from .facts import FactGroup, NumericFact, compare_facts, extract_facts
 from .rank import BM25, TfidfIndex, mmr_select, textrank
-from .text import chunk_words, content_terms, detect_language, keywords, light_stem, split_sentences
+from .text import (chunk_words, content_terms, detect_language, keywords, light_stem, split_sentences,
+                   strip_idioms)
 
 FACETS = {
     "fr": ["définition", "chiffres clés statistiques", "enjeux et limites", "actualité {year}",
@@ -42,8 +43,33 @@ DEPTH_LABELS = {1: "rapide", 2: "standard", 3: "approfondie"}
 LEAD_CHARS = 1500  # début de document considéré comme « chapeau »
 QUANTITATIVE_RE = re.compile(
     r"\b(combien|part|parts|pourcentage|proportion|taux|nombre|chiffres?|montant|quantit[ée]|"
-    r"statistiques?|niveau|volume|co[uû]t|prix|how (many|much)|percentage|share|rate|number|amount)\b",
+    r"statistiques?|niveau|volume|co[uû]t|prix|population|habitants?|superficie|taille|hauteur|altitude|"
+    r"distance|poids|vitesse|temp[ée]rature|how (many|much)|percentage|share|rate|number|amount)\b",
     re.I)
+# Le type de question indique la forme attendue de la réponse.
+WHY_RE = re.compile(r"\b(pourquoi|why|pour quelle raison|comment se fait)", re.I)
+CAUSAL_RE = re.compile(r"\b(car|parce qu|en raison|à cause|grâce à|dû|due|dus|dues|provient|provoqu|résult|diffus|"
+                       r"s'explique|explique|cause|origine|because|due to|caused)\w*", re.I)
+WHEN_RE = re.compile(r"\b(quand|en quelle année|à quelle (date|époque)|depuis quand|date|when)\b", re.I)
+_WORKS = (r"film|téléfilm|album|chanson|single|roman|série|feuilleton|jeu vidéo|bande dessinée|manga|tableau|"
+          r"peinture|sculpture|statue|poème|œuvre|triptyque|"
+          r"groupe|court métrage|opéra|pièce|émission|song|novel|video game|band")
+# Œuvre ou page d'homonymie : « Thriller (album) » dans le titre, « … est un film » dans la définition
+_WORK_TITLE = re.compile(rf"\((?:{_WORKS}|homonymie|disambiguation)\b[^)]*\)", re.I)
+_WORK_LEAD = re.compile(rf"\b(?:est|is) (?:une?|an?) (?:\w+ ){{0,2}}(?:{_WORKS})\b", re.I)
+_WORK_QUESTION = re.compile(rf"\b({_WORKS}|films?|livres?|œuvres?|artistes?|chanteu\w+|acteur|actrice)\b", re.I)
+
+
+def is_off_topic_work(title: str, lead: str, question: str) -> bool:
+    """Vrai pour une œuvre homonyme (« Le Trou noir », un film) quand la question ne parle pas
+    d'œuvre. Le titre et la phrase de définition comptent, pas les bandeaux « voir aussi »."""
+    if _WORK_QUESTION.search(question):
+        return False
+    lead = re.sub(r"^.*?\b(homonymes?|homonymie|Cet article concerne|Pour (?:le|la|les|l')\b)[^.]*\.\s*", "", lead)
+    return bool(_WORK_TITLE.search(title) or _WORK_LEAD.search(lead[:200]))
+
+
+DATE_RE = re.compile(r"\b(1\d{3}|20\d{2}|[IVX]+e siècle|siècle)\b")
 
 
 class SearchLike(Protocol):
@@ -227,7 +253,10 @@ class DeepAnalyzer:
     # ================================================================ recherche
     def _gather(self, queries: list[str], lang: str, report: AnalysisReport) -> list[tuple[SearchResult, str]]:
         scored: dict[str, tuple[float, SearchResult, str]] = {}
-        for query in queries:
+        wanted = set(content_terms(strip_idioms(report.question)))
+        for query_index, query in enumerate(queries):
+            # la question et ses mots-clés d'abord ; les facettes (« chiffres clés »…) ramènent du bruit
+            query_weight = 1.0 if query_index < 2 else 0.6
             self.progress(f"[recherche] {query}")
             report.queries.append(query)
             for result in self.search_engine.search(query, self.cfg.results_per_query, lang):
@@ -235,7 +264,13 @@ class DeepAnalyzer:
                 if key in self._seen_urls:
                     continue
                 prior = credibility.assess(result.url, result.domain).score
-                value = 1.0 / (1 + result.rank) + 0.6 * prior
+                value = query_weight / (1 + result.rank) + 0.6 * prior
+                title = set(content_terms(result.title))
+                if wanted and title:  # « Trou noir » pour « c'est quoi un trou noir ? »
+                    value += 0.5 * len(wanted & title) / len(wanted | title)
+                lead = result.snippet[:160] if result.provider == "wikipedia" else ""
+                if is_off_topic_work(result.title, lead, report.question):
+                    value *= 0.4
                 if key in scored:  # trouvé par plusieurs requêtes : signal de pertinence
                     old_value, old_result, old_query = scored[key]
                     scored[key] = (old_value + 0.25, old_result, old_query)
@@ -250,8 +285,10 @@ class DeepAnalyzer:
             batch = []
             while queue and len(batch) < budget + 2:
                 result, query = queue.pop(0)
+                cap = self.cfg.max_per_encyclopedia if result.domain.endswith("wikipedia.org") \
+                    else self.cfg.max_per_domain
                 if self._domain_counts.get(result.domain, 0) + sum(r.domain == result.domain for r, _ in batch) \
-                        >= self.cfg.max_per_domain:
+                        >= cap:
                     continue
                 self._seen_urls.add(normalize_url(result.url))
                 batch.append((result, query))
@@ -304,7 +341,7 @@ class DeepAnalyzer:
         passages = self._passages(report.sources)
         if not passages:
             return
-        question_terms = set(content_terms(question))
+        question_terms = set(content_terms(strip_idioms(question)))
         entities = question_entities(question)
         # Poids des mots de la question : rareté dans la langue (lexique) × nom propre
         rarity = self.lexicon.question_weights(question_terms) if self.lexicon else {}
@@ -321,6 +358,7 @@ class DeepAnalyzer:
         # --- phrases candidates : issues des meilleurs passages ET liées à la question
         candidates: list[tuple[int, str, list[str], float]] = []
         seen_sentences = set()
+        titles = {s.id: s.title for s in report.sources}
         for pi in top_passages:
             p = passages[pi]
             for sentence in split_sentences(p.text):
@@ -329,9 +367,13 @@ class DeepAnalyzer:
                 if n_words < 8 or n_words > 70 or key in seen_sentences:
                     continue
                 letters = sum(c.isalpha() for c in sentence) / max(1, len(sentence))
-                if letters < 0.6 or sentence.rstrip().endswith((":", ",")):
+                numeric = any(c.isdigit() for c in sentence)  # « Lyon — Population : 519 127 hab. »
+                if letters < (0.4 if numeric else 0.6) or sentence.rstrip().endswith((":", ",")):
                     continue
-                terms = content_terms(sentence)
+                # ligne de fiche « Lyon — Population : … » : le titre préfixé ne doit pas compter comme
+                # un mot de la phrase (il l'est déjà via le titre du document)
+                prefix = f"{titles[p.source_id]} — "
+                terms = content_terms(sentence[len(prefix):] if sentence.startswith(prefix) else sentence)
                 if question_terms and not question_terms & set(terms):
                     continue  # phrase hors sujet (menus, mentions génériques…)
                 seen_sentences.add(key)
@@ -358,11 +400,24 @@ class DeepAnalyzer:
                      + 0.55 * overlap)
         # Bonus : phrase d'introduction (les chapeaux résument), chiffre pour une question chiffrée
         quantitative = bool(QUANTITATIVE_RE.search(question))
+        why, when = bool(WHY_RE.search(question)), bool(WHEN_RE.search(question))
+        off_topic = {s.id for s in report.sources if is_off_topic_work(s.title, s.text[:300], question)}
+        title_match = {s.id: len(question_terms & title_terms[s.id]) / len(question_terms | title_terms[s.id])
+                       for s in report.sources if question_terms and title_terms[s.id]}
+        subject = max(title_match, key=lambda sid: (title_match[sid], -len(source_by_id[sid].title)), default=None)
         for i, (sid, sentence, terms, _) in enumerate(candidates):
             bonus = 1.0
             if 0 <= source_by_id[sid].text.find(sentence) < LEAD_CHARS:
                 bonus += 0.12
             if quantitative and extract_facts(sentence, sid):
+                bonus += 0.15
+            if sid == subject:
+                bonus += 0.15  # « Lyon » pour la population de Lyon, plutôt que « Métropole de Lyon »
+            if sid in off_topic:
+                bonus *= 0.5  # le film « Le Trou noir » quand on demande ce qu'est un trou noir
+            if why and CAUSAL_RE.search(sentence):
+                bonus += 0.35  # « pourquoi » : une phrase qui explique une cause
+            if when and DATE_RE.search(sentence):
                 bonus += 0.15
             # Un nom propre de la question (« France ») est une contrainte : une phrase sur
             # l'Allemagne, même très proche par ailleurs, répond à une autre question.
