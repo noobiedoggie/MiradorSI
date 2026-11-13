@@ -67,6 +67,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -84,6 +85,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -148,6 +150,18 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
     var aPropos by remember { mutableStateOf(false) }
     var horsLigne by remember { mutableStateOf<HorsLigne>(HorsLigne.Inconnue) }
     var confirmerTelechargement by remember { mutableStateOf(false) }
+    // modèles ouverts (Gemma, Qwen, Ministral) : téléchargés à la demande, exécutés sur le téléphone
+    val modeles = remember { GestionnaireModeles(context) }
+    var modeleActif by remember { mutableStateOf(modeles.actif) }
+    val etatsModeles = remember {
+        mutableStateMapOf<String, EtatModele>().apply {
+            Catalogue.MODELES.forEach { put(it.id, if (modeles.installe(it)) EtatModele.Installe else EtatModele.Absent) }
+        }
+    }
+    var choixModele by remember { mutableStateOf(false) }
+    var redaction by remember { mutableStateOf<String?>(null) }   // réponse en cours d'écriture
+    var phase by remember { mutableStateOf<String?>(null) }       // ce que fait Mirador pendant l'attente
+    var conversationEnCours by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         etat = try {
@@ -157,6 +171,7 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
         } catch (e: Throwable) {
             "Démarrage impossible : ${e.message}"
         }
+        modeleActif?.let { scope.launch { modeles.prechauffer(it) } }
         horsLigne = runCatching { engine.libraryState() }.getOrNull()
             ?.let { if (it.installed) HorsLigne.Installee(it.description) else HorsLigne.Absente }
             ?: HorsLigne.Absente
@@ -171,6 +186,32 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
             } catch (e: Throwable) {
                 HorsLigne.Erreur(e.message ?: "erreur inconnue")
             }
+        }
+    }
+
+    fun telechargerModele(m: ModeleOuvert) {
+        etatsModeles[m.id] = EtatModele.Telechargement(0, m.octets)
+        scope.launch {
+            etatsModeles[m.id] = try {
+                modeles.telecharger(m) { fait, total -> etatsModeles[m.id] = EtatModele.Telechargement(fait, total) }
+                EtatModele.Installe
+            } catch (e: Throwable) {
+                EtatModele.Erreur(e.message ?: "erreur inconnue")
+            }
+        }
+    }
+
+    fun utiliserModele(m: ModeleOuvert?) {
+        modeles.actif = m
+        modeleActif = m
+        scope.launch { if (m == null) modeles.decharger() else modeles.prechauffer(m) }
+    }
+
+    fun supprimerModele(m: ModeleOuvert) {
+        scope.launch {
+            modeles.supprimer(m)
+            etatsModeles[m.id] = EtatModele.Absent
+            modeleActif = modeles.actif
         }
     }
 
@@ -216,15 +257,40 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
         ecran = Ecran.Discussion(avecQuestion.id)
         saisie = ""
         occupe = true
+        conversationEnCours = avecQuestion.id
+        val modele = modeleActif
+        phase = null
         scope.launch {
             val reponse = try {
-                engine.ask(question, modeUtilise, profondeur, historique)
+                engine.ask(question, modeUtilise, profondeur, historique, llm = modele != null)
             } catch (e: Throwable) {
                 Reply("Désolé, une erreur est survenue : ${e.message}", emptyList())
             }
+            var texte = reponse.text
+            var sources = reponse.sources
+            if (modele != null && reponse.invite != null) {
+                phase = "${modele.nom} rédige la réponse…"
+                val redige = try {
+                    modeles.rediger(modele, reponse.invite) { partiel -> redaction = nettoyerRedaction(partiel) }
+                } catch (e: Throwable) {
+                    ""
+                }
+                val propre = nettoyerRedaction(redige)
+                if (propre.isNotBlank()) {
+                    texte = propre + when (reponse.genre) {
+                        "free" -> "\n\n(Rédigé par ${modele.nom} de mémoire, sans source vérifiée : à confirmer.)"
+                        else -> ""
+                    }
+                    val citees = Regex("\\[(\\d+)]").findAll(propre).map { it.groupValues[1].toInt() }.toSet()
+                    sources = reponse.sourcesInvite.filter { it.id in citees }.ifEmpty { reponse.sourcesInvite }
+                }
+            }
             val actuelle = conversations.firstOrNull { it.id == avecQuestion.id } ?: avecQuestion
-            remplacer(actuelle.copy(messages = actuelle.messages + ChatMessage(false, reponse.text, reponse.sources),
+            remplacer(actuelle.copy(messages = actuelle.messages + ChatMessage(false, texte, sources),
                 updatedAt = System.currentTimeMillis()))
+            redaction = null
+            phase = null
+            conversationEnCours = null
             occupe = false
         }
     }
@@ -254,18 +320,25 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
                 info = info, etat = etat, conversations = conversations,
                 onOuvrir = { ecran = Ecran.Discussion(it.id) }, onSupprimer = { supprimer(it) },
                 onAPropos = { aPropos = true }, composer = { composer(null) },
-                horsLigne = horsLigne,
+                horsLigne = horsLigne, onModeles = { choixModele = true },
+                modele = modeleActif?.let { "${it.nom} · ${it.editeur}" },
                 onHorsLigne = { if (horsLigne is HorsLigne.Absente || horsLigne is HorsLigne.Erreur) confirmerTelechargement = true },
             )
             is Ecran.Discussion -> {
                 val c = conversations.firstOrNull { it.id == e.id }
                 if (c == null) ecran = Ecran.Accueil else Discussion(
-                    conversation = c, occupe = occupe, onRetour = { ecran = Ecran.Accueil },
+                    conversation = c, occupe = occupe && conversationEnCours == c.id,
+                    redaction = redaction, phase = phase, onRetour = { ecran = Ecran.Accueil },
                     onSupprimer = { supprimer(c) }, composer = { composer(c.id) },
                 )
             }
         }
         if (aPropos) APropos(info, onFermer = { aPropos = false })
+        if (choixModele) ChoixModele(
+            info = info, actif = modeleActif, etats = etatsModeles, moteurOk = remember { modeles.moteurDisponible() },
+            onTelecharger = { telechargerModele(it) }, onUtiliser = { utiliserModele(it); choixModele = false },
+            onSupprimer = { supprimerModele(it) }, onFermer = { choixModele = false },
+        )
         if (confirmerTelechargement) AlertDialog(
             onDismissRequest = { confirmerTelechargement = false },
             containerColor = Carte, titleContentColor = Texte, textContentColor = Texte2,
@@ -293,6 +366,7 @@ private fun Accueil(
     info: EngineInfo?, etat: String, conversations: List<Conversation>,
     onOuvrir: (Conversation) -> Unit, onSupprimer: (Conversation) -> Unit, onAPropos: () -> Unit,
     composer: @Composable () -> Unit, horsLigne: HorsLigne = HorsLigne.Inconnue, onHorsLigne: () -> Unit = {},
+    onModeles: () -> Unit = {}, modele: String? = null,
 ) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -301,7 +375,7 @@ private fun Accueil(
             Spacer(Modifier.width(10.dp))
             Text("mirador", color = Texte, fontSize = 22.sp, fontWeight = FontWeight.Medium)
         }
-        Bandeau(etat, onAPropos)
+        Bandeau(modele ?: etat, onModeles)
         BandeauHorsLigne(horsLigne, onHorsLigne)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Image(remember { MiradorIcons.tower(BeigeFonce, Orange) }, contentDescription = info?.name ?: "Mirador SI",
@@ -489,11 +563,11 @@ private fun BoutonRond(icone: ImageVector, description: String, onClick: () -> U
 @Composable
 private fun Discussion(
     conversation: Conversation, occupe: Boolean, onRetour: () -> Unit, onSupprimer: () -> Unit,
-    composer: @Composable () -> Unit,
+    composer: @Composable () -> Unit, redaction: String? = null, phase: String? = null,
 ) {
     val liste = rememberLazyListState()
     var menu by remember { mutableStateOf(false) }
-    LaunchedEffect(conversation.messages.size, occupe) {
+    LaunchedEffect(conversation.messages.size, occupe, (redaction?.length ?: 0) / 120) {
         val dernier = conversation.messages.size + (if (occupe) 1 else 0) - 1
         if (dernier >= 0) liste.animateScrollToItem(dernier)
     }
@@ -519,7 +593,9 @@ private fun Discussion(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             items(conversation.messages) { Message(it) }
-            if (occupe) item { EnCours(conversation.mode) }
+            if (occupe) item {
+                if (!redaction.isNullOrBlank()) Message(ChatMessage(false, redaction)) else EnCours(conversation.mode, phase)
+            }
         }
         composer()
     }
@@ -567,31 +643,44 @@ private fun Message(m: ChatMessage) {
 
 /** « ## Titre » en intertitre, renvois [1] [2] aux sources en couleur. */
 private fun miseEnForme(texte: String): AnnotatedString = buildAnnotatedString {
-    texte.lines().forEachIndexed { i, ligne ->
+    texte.lines().forEachIndexed { i, brute ->
         if (i > 0) append("\n")
-        if (ligne.startsWith("## ")) {
-            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, fontSize = 17.sp)) { append(ligne.removePrefix("## ")) }
+        val titre = Regex("^#{1,4} ").find(brute)
+        if (titre != null) {
+            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, fontSize = 17.sp)) {
+                append(brute.removePrefix(titre.value).replace("**", ""))
+            }
             return@forEachIndexed
         }
+        // listes « - » ou « * » des modèles ouverts → puces
+        val ligne = brute.replace(Regex("^(\\s*)[-*] "), "$1• ")
         var debut = 0
-        Regex("\\[\\d+]").findAll(ligne).forEach { renvoi ->
-            append(ligne.substring(debut, renvoi.range.first))
-            withStyle(SpanStyle(color = Beige, fontSize = 13.sp, fontWeight = FontWeight.Medium)) {
-                append(renvoi.value)
+        Regex("\\*\\*(.+?)\\*\\*|(?<![*\\w])\\*(?!\\s)([^*]+?)(?<!\\s)\\*(?![*\\w])|\\[\\d+]").findAll(ligne).forEach { m ->
+            append(ligne.substring(debut, m.range.first))
+            if (m.value.startsWith("**")) {
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(m.groupValues[1]) }
+            } else if (m.value.startsWith("*")) {
+                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(m.groupValues[2]) }
+            } else {
+                withStyle(SpanStyle(color = Beige, fontSize = 13.sp, fontWeight = FontWeight.Medium)) { append(m.value) }
             }
-            debut = renvoi.range.last + 1
+            debut = m.range.last + 1
         }
         append(ligne.substring(debut))
     }
 }
 
+/** Texte d'un modèle ouvert, sans balises de réflexion ni espaces superflus. */
+private fun nettoyerRedaction(texte: String): String =
+    texte.replace(Regex("(?s)<think>.*?(</think>|$)"), "").trim()
+
 @Composable
-private fun EnCours(mode: Mode) {
+private fun EnCours(mode: Mode, phase: String? = null) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         CircularProgressIndicator(Modifier.size(18.dp), color = Beige, strokeWidth = 2.dp)
         Spacer(Modifier.width(12.dp))
         Text(
-            if (mode == Mode.ANALYSE) "Recherche, lecture et recoupement des sources…" else "Mirador réfléchit…",
+            phase ?: if (mode == Mode.ANALYSE) "Recherche, lecture et recoupement des sources…" else "Mirador réfléchit…",
             color = Texte2, fontSize = 15.sp,
         )
     }
@@ -621,11 +710,111 @@ private fun APropos(info: EngineInfo?, onFermer: () -> Unit) {
                 } ?: Text("Mirador SI démarre…")
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "IA créée de zéro. Le modèle local a été entraîné sur des articles de Wikipédia " +
+                    "IA créée de zéro. Le modèle local Vigie a été entraîné sur des articles de Wikipédia " +
                         "(licence CC BY-SA). Les analyses lisent des sources sur internet et les citent.",
+                    color = Texte2, fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Modèles ouverts au choix (téléchargés à la demande, exécutés sur le téléphone avec " +
+                        "llama.cpp, licence MIT) : Gemma 3 1B de Google (Gemma Terms of Use), Qwen3.5 2B " +
+                        "d'Alibaba et Ministral 3 3B de Mistral AI (Apache 2.0).",
                     color = Texte2, fontSize = 13.sp,
                 )
             }
         },
     )
+}
+
+// ------------------------------------------------------------------ choix du modèle
+/** Choisir le « cerveau » qui rédige les réponses : Vigie (intégré) ou un des 3 modèles ouverts. */
+@Composable
+private fun ChoixModele(
+    info: EngineInfo?, actif: ModeleOuvert?, etats: Map<String, EtatModele>, moteurOk: Boolean,
+    onTelecharger: (ModeleOuvert) -> Unit, onUtiliser: (ModeleOuvert?) -> Unit,
+    onSupprimer: (ModeleOuvert) -> Unit, onFermer: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onFermer,
+        containerColor = Carte, titleContentColor = Texte, textContentColor = Texte2,
+        confirmButton = { TextButton(onClick = onFermer) { Text("Fermer", color = Beige) } },
+        title = { Text("Cerveau de Mirador") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("Mirador trouve et vérifie les sources ; le modèle choisi rédige la réponse, " +
+                    "directement sur ton téléphone.", fontSize = 13.sp, color = Texte2)
+                Spacer(Modifier.height(12.dp))
+                CarteModele(
+                    nom = "Vigie", role = "Intégré", detail = (info?.model ?: "Vigie") + " · créé de zéro",
+                    resume = "Le modèle maison de Mirador, sans téléchargement : réponses construites à partir des sources.",
+                    actif = actif == null,
+                ) {
+                    if (actif != null) BoutonModele("Utiliser") { onUtiliser(null) }
+                }
+                Catalogue.MODELES.forEach { m ->
+                    Spacer(Modifier.height(10.dp))
+                    val etat = etats[m.id] ?: EtatModele.Absent
+                    CarteModele(
+                        nom = m.nom, role = m.role, detail = "${m.editeur} · ${m.taille} · ${m.licence}",
+                        resume = m.resume, actif = actif?.id == m.id,
+                    ) {
+                        when (etat) {
+                            EtatModele.Absent -> if (moteurOk) BoutonModele("Télécharger") { onTelecharger(m) }
+                            is EtatModele.Telechargement -> Column(Modifier.fillMaxWidth()) {
+                                LinearProgressIndicator(
+                                    progress = { if (etat.total > 0) etat.fait.toFloat() / etat.total else 0f },
+                                    color = Beige, trackColor = Bordure, modifier = Modifier.fillMaxWidth(),
+                                )
+                                Text("${etat.fait / 1_000_000} / ${etat.total / 1_000_000} Mo", fontSize = 12.sp, color = Texte3)
+                            }
+                            EtatModele.Installe -> Row {
+                                if (actif?.id != m.id) BoutonModele("Utiliser") { onUtiliser(m) }
+                                TextButton(onClick = { onSupprimer(m) }) { Text("Supprimer", color = Texte3, fontSize = 13.sp) }
+                            }
+                            is EtatModele.Erreur -> Column {
+                                Text("Échec : ${etat.message}", color = Orange, fontSize = 12.sp)
+                                BoutonModele("Réessayer") { onTelecharger(m) }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    if (moteurOk) "Modèles ouverts téléchargés depuis Hugging Face (Wi-Fi conseillé). " +
+                        "Un modèle plus gros écrit mieux mais répond plus lentement et demande plus de mémoire."
+                    else "Les modèles ouverts ne peuvent pas tourner sur cet appareil.",
+                    fontSize = 12.sp, color = Texte3,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+private fun CarteModele(nom: String, role: String, detail: String, resume: String, actif: Boolean,
+                        actions: @Composable () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Fond)
+            .border(1.dp, if (actif) Beige else Bordure, RoundedCornerShape(16.dp)).padding(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(nom, color = Texte, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.width(8.dp))
+            Text(role, color = Fond, fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Beige).padding(horizontal = 6.dp, vertical = 2.dp))
+            if (actif) {
+                Spacer(Modifier.weight(1f))
+                Text("✓ actif", color = Beige, fontSize = 13.sp)
+            }
+        }
+        Text(detail, color = Texte3, fontSize = 12.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(resume, color = Texte2, fontSize = 13.sp)
+        actions()
+    }
+}
+
+@Composable
+private fun BoutonModele(texte: String, onClick: () -> Unit) {
+    TextButton(onClick = onClick) { Text(texte, color = Beige, fontWeight = FontWeight.Medium) }
 }

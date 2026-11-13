@@ -78,33 +78,64 @@ def _info(agent) -> dict:
     return info
 
 
-def ask(message: str, mode: str, depth: int = 2, history_json: str = "[]", online: bool = True) -> str:
+def ask(message: str, mode: str, depth: int = 2, history_json: str = "[]", online: bool = True,
+        llm: bool = False) -> str:
     """mode = "analyse" (analyse approfondie sur internet) ou "local" (mode de base : outils, modèle
-    embarqué et bibliothèque ; une recherche rapide sur internet si besoin et si `online`)."""
+    embarqué et bibliothèque ; une recherche rapide sur internet si besoin et si `online`).
+
+    Avec `llm`, la réponse contient aussi « llm » : la conversation à faire rédiger par le modèle
+    ouvert choisi sur le téléphone (sources numérotées + question), et « llm_sources ». Le texte
+    habituel reste la réponse de secours si le modèle échoue."""
     if _agent is None:
         return json.dumps({"text": "Mirador SI démarre encore, réessaie dans un instant.", "sources": []})
     try:
-        # calculs, salutations, politesse, questions sur Mirador : réponse directe, sans internet
-        quick = _agent.quick_reply(message)
-        if quick:
-            return json.dumps({"text": _app_wording(quick), "sources": []}, ensure_ascii=False)
-        _agent.history = [tuple(pair) for pair in json.loads(history_json)][-4:]
-        if mode == "analyse":
-            from miradorsi.reasoning import resolve_follow_up
-
-            question = resolve_follow_up(message, _agent.history)  # « Et sa capitale ? »
-            reasoned = _agent.reason(question, online=True)        # âges, comparaisons, chaînes
-            if reasoned is not None:
-                text, report = reasoned
-                return json.dumps({"text": text, "sources": _sources(report, text)}, ensure_ascii=False)
-            return json.dumps(_analyse(question, int(depth)), ensure_ascii=False)
-        # mode de base : outils, mémoire d'identité, raisonnement, bibliothèque (Wikipédia),
-        # puis recherche rapide sur internet quand le téléphone est connecté
-        text, report = _agent.offline_reply(message, online=bool(online))
-        return json.dumps({"text": _app_wording(text), "sources": _sources(report, text)}, ensure_ascii=False)
+        history = [tuple(pair) for pair in json.loads(history_json)][-4:]
+        text, report, kind = _answer(message, mode, int(depth), history, bool(online))
+        out = {"text": _app_wording(text), "sources": _sources(report, text)}
+        if llm and kind != "exact":
+            out.update(_llm_request(message, kind, report, history))
+        return json.dumps(out, ensure_ascii=False)
     except Exception as exc:  # l'application ne doit jamais planter sur une erreur Python
         return json.dumps({"text": f"Désolé, une erreur est survenue : {exc}", "sources": []},
                           ensure_ascii=False)
+
+
+def _answer(message: str, mode: str, depth: int, history: list, online: bool):
+    """(texte, rapport ou None, genre) — genre : exact, chat, sources ou none (voir offline_reply)."""
+    from miradorsi.agent import calculate, is_insult
+    from miradorsi.reasoning import convert_tool, date_tool, resolve_follow_up
+
+    # calculs, salutations, politesse, questions sur Mirador : réponse directe, sans internet
+    quick = _agent.quick_reply(message)
+    if quick:
+        exact = is_insult(message) or calculate(message) or date_tool(message) or convert_tool(message)
+        return quick, None, "exact" if exact else "chat"
+    _agent.history = history
+    if mode == "analyse":
+        question = resolve_follow_up(message, history)  # « Et sa capitale ? »
+        reasoned = _agent.reason(question, online=True)  # âges, comparaisons, chaînes
+        if reasoned is not None:
+            return reasoned[0], reasoned[1], "exact"
+        return _analyse(question, depth)
+    # mode de base : outils, mémoire d'identité, raisonnement, bibliothèque (Wikipédia),
+    # puis recherche rapide sur internet quand le téléphone est connecté
+    text, report = _agent.offline_reply(message, online=online)
+    return text, report, _agent.reply_kind
+
+
+def _llm_request(message: str, kind: str, report, history: list) -> dict:
+    from miradorsi.analysis import llm_prompt
+    from miradorsi.reasoning import resolve_follow_up
+
+    if kind == "chat":
+        return {"llm": llm_prompt.chat_messages(message, history), "llm_kind": "chat"}
+    question = resolve_follow_up(message, history)
+    if kind == "sources" and report is not None and report.findings:
+        messages = llm_prompt.sourced_messages(question, report, history)
+        ids = set(llm_prompt.provided_source_ids(messages))
+        sources = [s for s in _all_sources(report) if s["id"] in ids]
+        return {"llm": messages, "llm_kind": "sources", "llm_sources": sources}
+    return {"llm": llm_prompt.free_messages(question, history), "llm_kind": "free"}
 
 
 def _app_wording(text: str) -> str:
@@ -116,7 +147,7 @@ def _app_wording(text: str) -> str:
                          "télécharge la bibliothèque hors ligne (bandeau de l'accueil)"))
 
 
-def _analyse(question: str, depth: int) -> dict:
+def _analyse(question: str, depth: int):
     from miradorsi.analysis.answer import compose_answer
 
     report = _agent.analyzer.analyze(question, depth)
@@ -125,14 +156,12 @@ def _analyse(question: str, depth: int) -> dict:
         if offline is not None:  # pas d'internet (ou rien trouvé) : la bibliothèque prend le relais
             text = ("Je n'ai pas pu chercher sur internet ; voici ce que dit ma bibliothèque hors ligne.\n\n"
                     + compose_answer(offline, offline=True))
-            return {"text": text, "sources": _sources(offline, text)}
+            return text, offline, "sources"
         incidents = "\n".join(f"• {e}" for e in explain_errors(report.errors))
         text = ("Je n'ai pas pu collecter d'information exploitable. Vérifie la connexion internet "
                 "ou reformule la question.")
-        return {"text": text + (f"\n\n{incidents}" if incidents else ""), "sources": []}
-
-    text = compose_answer(report)
-    return {"text": text, "sources": _sources(report, text)}
+        return text + (f"\n\n{incidents}" if incidents else ""), None, "none"
+    return compose_answer(report), report, "sources"
 
 
 def _sources(report, text: str) -> list[dict]:
@@ -140,8 +169,12 @@ def _sources(report, text: str) -> list[dict]:
     if report is None:
         return []
     cited = {int(n) for n in re.findall(r"\[(\d+)\]", text)}
+    return [s for s in _all_sources(report) if s["id"] in cited]
+
+
+def _all_sources(report) -> list[dict]:
     return [{"id": s.id, "title": s.title, "url": s.url, "domain": s.domain,
-             "reliability": s.credibility.label} for s in report.sources if s.id in cited]
+             "reliability": s.credibility.label} for s in report.sources]
 
 
 def explain_errors(errors: list[str], limit: int = 3) -> list[str]:

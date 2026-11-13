@@ -39,7 +39,7 @@ class InterfaceTest {
         attendreTexte("hors ligne")  // bandeau : le modèle embarqué est chargé
         regle.onNodeWithText("mirador").assertIsDisplayed()
         regle.onNodeWithContentDescription("À propos").assertIsDisplayed()
-        regle.onNodeWithContentDescription("Mirador SI").assertIsDisplayed()  // le mirador animé
+        regle.onNodeWithContentDescription("Mirador SI").assertIsDisplayed()  // la tour
         regle.onNodeWithText("Que souhaitez-vous analyser ?").assertIsDisplayed()
         regle.onNodeWithContentDescription("Réglages de l'analyse").assertIsDisplayed()
         regle.onNodeWithContentDescription("Analyse sur internet").assertIsDisplayed()
@@ -57,5 +57,17 @@ class InterfaceTest {
         attendreTexte("Je suis Mirador SI")
         // la question apparaît dans le titre de la conversation et dans la bulle de l'utilisateur
         regle.onAllNodesWithText("Qui es-tu ?").assertCountEquals(2)
+    }
+
+    @Test
+    fun leBandeauOuvreLeChoixDesTroisModeles() {
+        attendreTexte("paramètres")  // bandeau du modèle (Vigie)
+        regle.onAllNodesWithText("paramètres", substring = true)[0].performClick()
+        attendreTexte("Cerveau de Mirador")
+        listOf("Vigie", "Gemma 3 1B", "Qwen3.5 2B", "Ministral 3 3B").forEach {
+            regle.onAllNodesWithText(it, substring = true).fetchSemanticsNodes().isNotEmpty() ||
+                throw AssertionError("$it absent du choix des modèles")
+        }
+        regle.onNodeWithText("Fermer").performClick()
     }
 }

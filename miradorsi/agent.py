@@ -176,6 +176,7 @@ class MiradorAgent:
         self.history: list[tuple[str, str]] = []
         self.progress = on_progress or (lambda message: None)
         self.last_report: AnalysisReport | None = None
+        self.reply_kind = "none"  # d'où vient la dernière réponse du mode de base (voir offline_reply)
         self.library: Library | None = None
         self.offline_analyzer: DeepAnalyzer | None = None
 
@@ -278,29 +279,40 @@ class MiradorAgent:
         le laisser deviner, on répond par un outil, par la mémoire d'identité ou par la
         bibliothèque hors ligne (articles de Wikipédia). Si rien ne répond et que le téléphone est
         connecté (`online`), une recherche rapide sur internet rédige une vraie réponse sourcée ;
-        sinon on le dit honnêtement."""
+        sinon on le dit honnêtement.
+
+        `self.reply_kind` dit d'où vient la réponse : « exact » (calcul, raisonnement, identité),
+        « chat » (conversation, écriture), « sources » (passages trouvés) ou « none » (rien trouvé).
+        Un modèle de langage ouvert peut alors rédiger à partir de ces éléments."""
         quick = self.quick_reply(message)
         if quick:
+            self.reply_kind = "exact" if (is_insult(message) or calculate(message) or date_tool(message)
+                                          or convert_tool(message)) else "chat"
             return quick, None
         remembered, score = self._identity_memory(message)
         if remembered and score >= 0.34:
+            self.reply_kind = "exact"
             return remembered, None
         write = _WRITE_INTENT.match(message)
         if write and self.brain is not None:
+            self.reply_kind = "chat"
             start = write.group(1).strip()
             text = (start + self.brain.complete(start)).strip()
             return text + "\n\n(Texte inventé par mon modèle, sans vérification.)", None
         message = resolve_follow_up(message, self.history)  # « Et sa capitale ? » → (Japon)
         reasoned = self.reason(message, online=False)
         if reasoned is not None:
+            self.reply_kind = "exact"
             return reasoned
         report = self.library_answer(message)
         if report is not None:
+            self.reply_kind = "sources"
             return compose_answer(report, offline=True), report
         if online and content_terms(strip_idioms(message)):
             found = self.online_answer(message)
             if found is not None:
                 return found
+        self.reply_kind = "none"
         if self.library is not None:
             return NOT_IN_LIBRARY, None
         if self.brain is None:
@@ -314,12 +326,14 @@ class MiradorAgent:
         try:
             reasoned = self.reason(question, online=True)
             if reasoned is not None:
+                self.reply_kind = "exact"
                 return reasoned
             report = self.analyzer.analyze(question, 1)
         except (WebError, OSError):
             return None
         if not report.findings:
             return None
+        self.reply_kind = "sources"
         return compose_answer(report), report
 
     def reason(self, question: str, online: bool) -> tuple[str, AnalysisReport] | None:

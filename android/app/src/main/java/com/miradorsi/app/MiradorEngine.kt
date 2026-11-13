@@ -30,7 +30,18 @@ data class EngineInfo(
 
 data class Source(val id: Int, val title: String, val url: String, val domain: String, val reliability: String)
 
-data class Reply(val text: String, val sources: List<Source>)
+/**
+ * Réponse de Mirador SI. Si un modèle ouvert est choisi, `invite` est la conversation qu'il doit
+ * rédiger (sources numérotées + question) ; `text` reste la réponse de secours.
+ * `genre` : « chat » (discussion), « sources » (passages trouvés) ou « free » (aucune source).
+ */
+data class Reply(
+    val text: String,
+    val sources: List<Source>,
+    val invite: List<Pair<String, String>>? = null,
+    val genre: String = "",
+    val sourcesInvite: List<Source> = emptyList(),
+)
 
 /** La bibliothèque hors ligne : articles de Wikipédia sur le téléphone, pour répondre sans internet. */
 data class LibraryState(val installed: Boolean, val description: String)
@@ -126,6 +137,11 @@ class MiradorEngine(context: Context) {
         }
     }
 
+    private fun sources(array: JSONArray?): List<Source> = (0 until (array?.length() ?: 0)).map {
+        val s = array!!.getJSONObject(it)
+        Source(s.optInt("id"), s.optString("title"), s.optString("url"), s.optString("domain"), s.optString("reliability"))
+    }
+
     /** Le téléphone a-t-il internet ? Le mode de base ne cherche en ligne que dans ce cas. */
     private fun enLigne(): Boolean = try {
         val reseau = appContext.getSystemService(ConnectivityManager::class.java)
@@ -135,22 +151,20 @@ class MiradorEngine(context: Context) {
         true
     }
 
-    suspend fun ask(message: String, mode: Mode, depth: Int, history: List<Pair<String, String>>): Reply =
+    suspend fun ask(message: String, mode: Mode, depth: Int, history: List<Pair<String, String>>,
+                    llm: Boolean = false): Reply =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val module = bridge ?: return@withLock Reply("Mirador SI n'a pas pu démarrer.", emptyList())
                 val past = JSONArray()
                 history.forEach { (question, answer) -> past.put(JSONArray().put(question).put(answer)) }
                 val json = JSONObject(
-                    module.callAttr("ask", message, mode.key, depth, past.toString(), enLigne()).toString())
-                val sources = mutableListOf<Source>()
-                val array = json.optJSONArray("sources") ?: JSONArray()
-                for (i in 0 until array.length()) {
-                    val s = array.getJSONObject(i)
-                    sources += Source(s.optInt("id"), s.optString("title"), s.optString("url"),
-                        s.optString("domain"), s.optString("reliability"))
+                    module.callAttr("ask", message, mode.key, depth, past.toString(), enLigne(), llm).toString())
+                val invite = json.optJSONArray("llm")?.let { a ->
+                    (0 until a.length()).map { a.getJSONObject(it).let { m -> m.optString("role") to m.optString("content") } }
                 }
-                Reply(json.optString("text"), sources)
+                Reply(json.optString("text"), sources(json.optJSONArray("sources")), invite,
+                    json.optString("llm_kind"), sources(json.optJSONArray("llm_sources")))
             }
         }
 }

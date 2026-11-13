@@ -14,7 +14,7 @@ jobs:
   apk:
     name: Construire l'APK de Mirador SI
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +37,9 @@ jobs:
 
       - name: Embarquer le code Python de Mirador SI
         run: android/prepare_python.sh
+
+      - name: Sources du moteur des modèles ouverts (llama.cpp)
+        run: android/obtenir_llama_cpp.sh
 
       - name: Compiler l'APK
         run: gradle -p android assembleDebug --stacktrace
@@ -80,6 +83,14 @@ jobs:
       - name: Embarquer le code Python de Mirador SI
         run: android/prepare_python.sh
 
+      - name: Sources du moteur des modèles ouverts (llama.cpp)
+        run: android/obtenir_llama_cpp.sh
+
+      # Compilation avant de lancer l'émulateur (le moteur natif prend quelques minutes) ;
+      # x86_64 seulement, l'architecture de l'émulateur.
+      - name: Compiler l'appli et les tests (x86_64)
+        run: gradle -p android -Pabis=x86_64 assembleDebug assembleDebugAndroidTest --stacktrace
+
       - name: Activer KVM (accélération de l'émulateur)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -93,11 +104,11 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
-            gradle -p android installDebug
+            gradle -p android -Pabis=x86_64 installDebug
             adb shell am start -n com.miradorsi.app/.MainActivity
             sleep 20
             adb exec-out screencap -p > capture-accueil.png
-            gradle -p android connectedDebugAndroidTest --stacktrace
+            gradle -p android -Pabis=x86_64 connectedDebugAndroidTest --stacktrace
 
       - name: Capture d'écran de l'accueil
         if: always()

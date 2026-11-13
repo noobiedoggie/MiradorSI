@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "android" / "app" / "src" / "main" / "python"))
+sys.path.append(str(Path(__file__).resolve().parents[1] / "android" / "app" / "src" / "main" / "python"))  # après le dépôt : son miradorsi prime
 
 from mirador_app.bridge import explain_errors  # noqa: E402
 
@@ -22,3 +22,28 @@ def test_explain_errors_hides_urls_and_merges_duplicates():
         "exemple.fr est injoignable : vérifie la connexion internet",
     ]
     assert not any("http" in line for line in lines)
+
+
+def test_bridge_prepares_requests_for_open_models(tmp_path, monkeypatch):
+    import json
+
+    from mirador_app import bridge
+    from test_agent import make_agent
+
+    monkeypatch.setattr(bridge, "_agent", make_agent(tmp_path))
+    exact = json.loads(bridge.ask("1+1", "local", 1, "[]", False, True))
+    assert exact["text"] == "1 + 1 = 2" and "llm" not in exact            # calcul : réponse exacte
+    chat = json.loads(bridge.ask("yo", "local", 1, "[]", False, True))
+    assert chat["llm_kind"] == "chat" and chat["llm"][-1] == {"role": "user", "content": "yo"}
+    assert chat["llm"][0]["role"] == "system" and "Mirador SI" in chat["llm"][0]["content"]
+    sourced = json.loads(bridge.ask("Quelle est la puissance solaire installée en France ?", "local", 1,
+                                    json.dumps([["Bonjour", "Salut !"]]), True, True))
+    assert sourced["llm_kind"] == "sources" and sourced["llm_sources"]
+    user = sourced["llm"][-1]["content"]
+    assert user.startswith("Sources :\n[") and "20 GW" in user and user.rstrip().endswith("?")
+    assert [m["role"] for m in sourced["llm"]] == ["system", "user", "assistant", "user"]
+    assert {s["id"] for s in sourced["llm_sources"]} <= {int(n) for n in __import__("re").findall(r"^\[(\d+)\]", user, 8)}
+    free = json.loads(bridge.ask("Quelle est la puissance solaire installée en France ?", "local", 1, "[]", False, True))
+    assert free["llm_kind"] == "free"                                        # hors ligne, rien trouvé
+    plain = json.loads(bridge.ask("yo", "local", 1, "[]", False, False))
+    assert "llm" not in plain                                                # sans modèle ouvert : inchangé
