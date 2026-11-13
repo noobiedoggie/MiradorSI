@@ -151,3 +151,35 @@ jobs:
           name: rapport-tests-emulateur
           path: android/app/build/reports/androidTests/
           if-no-files-found: ignore
+
+  # Une fois les tests passés, l'APK est publié en « release » : lien direct, sans compte GitHub
+  # ni archive zip : https://github.com/<dépôt>/releases/latest/download/MiradorSI.apk
+  publier:
+    name: Publier l'APK testé
+    needs: [apk, emulateur]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publier-apk
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MiradorSI-apk
+
+      - name: Remplacer la release « apk »
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la MiradorSI.apk
+          cat > notes.md <<EOF
+          APK Android de Mirador SI, compilé et testé sur un émulateur Android 11 par GitHub Actions
+          (commit ${GITHUB_SHA::7}).
+
+          **Installer** : ouvrir MiradorSI.apk sur le téléphone, puis autoriser l'installation
+          d'applications de cette source quand Android le demande. Android 8.0 ou plus récent.
+          EOF
+          gh release delete apk --yes --cleanup-tag || true
+          gh release create apk MiradorSI.apk --target "$GITHUB_SHA" --latest \
+            --title "Mirador SI — APK Android" --notes-file notes.md
