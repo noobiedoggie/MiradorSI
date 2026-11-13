@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import re
 from pathlib import Path
 from typing import Callable
 
+from .analysis.answer import compose_answer
 from .analysis.lexicon import load_lexicon
 from .analysis.researcher import AnalysisReport, DeepAnalyzer
-from .analysis.text import content_terms, normalize
+from .analysis.text import content_terms, normalize, strip_idioms
 from .config import Config
 from .identity import Identity
+from .library import Library, LibraryFetcher, LibrarySearch, open_library
 from .model.brain import Brain
 from .web.http import WebClient, WebError
 from .web.search import Fetcher, SearchEngine
@@ -58,8 +61,27 @@ OFFLINE_LIMIT = (
     "(quelques millions de paramètres, des milliers de fois moins qu'un grand assistant) : il ne "
     "comprend pas encore les questions libres, et je préfère te le dire plutôt que d'inventer.\n\n"
     "Passe en mode Analyse (la loupe) : je cherche la réponse sur internet, je lis les sources et "
-    "je te rédige une réponse sourcée. Hors ligne, je sais faire les calculs et parler de moi."
+    "je te rédige une réponse sourcée. Ou télécharge la bibliothèque hors ligne (sur l'accueil) : "
+    "je répondrai alors sans internet, à partir des articles de Wikipédia."
 )
+NOT_IN_LIBRARY = (
+    "Je n'ai rien trouvé à ce sujet dans ma bibliothèque hors ligne (les articles les plus consultés "
+    "de Wikipédia). Passe en mode Analyse (la loupe) : je chercherai sur internet."
+)
+
+
+_PERSONAL = re.compile(
+    r"\b(et toi|et vous|tu aimes|t'aimes|tu preferes|ton avis|tu en penses|tu crois|tu m'aimes|je t'aime|"
+    r"je te deteste|j'aime|j'adore|je deteste|je m'ennuie|je suis (?:triste|content|contente|fatigue|fatiguee)|"
+    r"tu fais quoi|t'as quel age|quel age as-tu|tu es (?:mignon|bete|gentil|mechant|intelligent|marrant|drole))\b")
+PERSONAL_REPLY = ("Je suis une IA d'analyse : je n'ai pas de goûts, d'émotions ni d'avis personnels. "
+                  "Par contre, pose-moi une question sur n'importe quel sujet et je te trouve la réponse, "
+                  "sources à l'appui.")
+
+
+def is_personal(message: str) -> bool:
+    """« j'aime le chocolat et toi ? » : de la conversation, pas une question de connaissances."""
+    return bool(_PERSONAL.search(normalize(message).replace("’", "'")))
 
 
 def is_insult(message: str) -> bool:
@@ -153,6 +175,21 @@ class MiradorAgent:
         self.history: list[tuple[str, str]] = []
         self.progress = on_progress or (lambda message: None)
         self.last_report: AnalysisReport | None = None
+        self.library: Library | None = None
+        self.offline_analyzer: DeepAnalyzer | None = None
+
+    def use_library(self, library: Library | None) -> None:
+        """Branche la bibliothèque hors ligne : recherche et lecture sans internet."""
+        if self.library is not None and self.library is not library:
+            self.library.close()
+        self.library = library
+        if library is None:
+            self.offline_analyzer = None
+            return
+        cfg = dataclasses.replace(self.cfg.analysis, min_document_chars=80, max_sources={1: 5, 2: 6, 3: 8})
+        self.offline_analyzer = DeepAnalyzer(SearchEngine([LibrarySearch(library)]), LibraryFetcher(library),
+                                             cfg, analyst=self.identity.name,
+                                             lexicon=getattr(self.analyzer, "lexicon", None))
 
     @classmethod
     def create(cls, cfg: Config, on_progress: Callable[[str], None] | None = None,
@@ -166,7 +203,9 @@ class MiradorAgent:
         analyzer = DeepAnalyzer(search, fetcher, cfg.analysis, on_progress, analyst=identity.name,
                                 lexicon=lexicon)
         brain = Brain.load(cfg.path("checkpoints"), cfg.generation) if load_brain else None
-        return cls(cfg, identity, analyzer, search, fetcher, brain, on_progress)
+        agent = cls(cfg, identity, analyzer, search, fetcher, brain, on_progress)
+        agent.use_library(open_library(cfg.path("library")))
+        return agent
 
     # ------------------------------------------------------------------ routage
     def handle(self, message: str) -> str:
@@ -203,6 +242,8 @@ class MiradorAgent:
         if is_insult(message):
             return ("Je reste poli. Si ma réponse ne t'a pas aidé, dis-moi ce que tu cherchais : "
                     "en mode Analyse (la loupe), je vérifie sur internet et je cite mes sources.")
+        if is_personal(message):
+            return PERSONAL_REPLY
         if not is_small_talk(message):
             return None
         words = re.sub(r"[^a-z0-9+]+", " ", normalize(message)).split()
@@ -229,22 +270,51 @@ class MiradorAgent:
 
     # ------------------------------------------------------------------ actions
     def chat(self, message: str) -> str:
+        return self.offline_reply(message)[0]
+
+    def offline_reply(self, message: str) -> tuple[str, AnalysisReport | None]:
         """Hors ligne. Le petit modèle embarqué ne comprend pas une question libre : plutôt que de
-        laisser deviner une réponse fausse, on répond seulement quand c'est fiable."""
+        le laisser deviner, on répond par un outil, par la mémoire d'identité ou par la
+        bibliothèque hors ligne (articles de Wikipédia), et sinon on le dit honnêtement."""
         quick = self.quick_reply(message)
         if quick:
-            return quick
+            return quick, None
         remembered, score = self._identity_memory(message)
         if remembered and score >= 0.34:
-            return remembered
+            return remembered, None
         write = _WRITE_INTENT.match(message)
         if write and self.brain is not None:
             start = write.group(1).strip()
-            return (start + self.brain.complete(start)).strip() + "\n\n(Texte inventé par mon modèle, sans vérification.)"
+            text = (start + self.brain.complete(start)).strip()
+            return text + "\n\n(Texte inventé par mon modèle, sans vérification.)", None
+        report = self.library_answer(message)
+        if report is not None:
+            return compose_answer(report, offline=True), report
+        if self.library is not None:
+            return NOT_IN_LIBRARY, None
         if self.brain is None:
             return ("Mon réseau de neurones n'est pas encore entraîné (lance `mirador train`). "
-                    "Je peux déjà analyser n'importe quel sujet : /analyse <ta question>")
-        return OFFLINE_LIMIT
+                    "Je peux déjà analyser n'importe quel sujet : /analyse <ta question>"), None
+        return OFFLINE_LIMIT, None
+
+    def library_answer(self, question: str) -> AnalysisReport | None:
+        """Analyse dans la bibliothèque hors ligne ; None si elle est absente ou muette."""
+        if self.offline_analyzer is None:
+            return None
+        report = self.offline_analyzer.analyze(question, 1)
+        if not report.findings:
+            return None
+        # Seuil de pertinence : une des meilleures phrases (avec le titre de son article) doit couvrir
+        # l'essentiel des mots de la question, sinon mieux vaut dire qu'on n'a pas trouvé.
+        wanted = set(content_terms(strip_idioms(question)))
+
+        def coverage(finding) -> float:
+            source = report.source(finding.source_id)
+            found = set(content_terms(finding.text)) | set(content_terms(source.title if source else ""))
+            return len(wanted & found) / len(wanted) if wanted else 1.0
+
+        top = sorted(report.findings, key=lambda f: -f.relevance)[:3]
+        return report if max(coverage(f) for f in top) >= 0.6 else None
 
     def analyze(self, question: str, depth: int | None = None) -> str:
         report = self.analyzer.analyze(question, depth)

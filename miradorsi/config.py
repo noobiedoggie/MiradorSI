@@ -19,6 +19,7 @@ class PathsConfig:
     cache: str = ".cache/web"
     reports: str = "reports"
     lexicon: str = "data/lexique_fr.json"
+    library: str = "data/bibliotheque-fr.db"  # bibliothèque hors ligne (mirador bibliotheque)
 
 
 @dataclass

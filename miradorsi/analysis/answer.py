@@ -116,7 +116,7 @@ def _cite(ids: list[int]) -> str:
     return "".join(f"[{i}]" for i in ids)
 
 
-def compose_answer(report: AnalysisReport, max_points: int = 4) -> str:
+def compose_answer(report: AnalysisReport, max_points: int = 4, offline: bool = False) -> str:
     """Réponse rédigée : idée principale, points clés, chiffres recoupés, réserves."""
     if not report.findings:
         return ""
@@ -171,6 +171,9 @@ def compose_answer(report: AnalysisReport, max_points: int = 4) -> str:
             lines.append(f"• {values} ({', '.join(group.context[:3])}) {_cite(group.source_ids)}")
         paragraphs.append("## Chiffres confirmés par plusieurs sources\n" + "\n".join(lines))
     count = len(report.sources)
-    paragraphs.append(f"D'après {count} source{'s' if count > 1 else ''} lue{'s' if count > 1 else ''} "
-                      f"en {report.duration_seconds:.0f} s.")
+    plural = "s" if count > 1 else ""
+    if offline:
+        paragraphs.append(f"D'après {count} article{plural} de la bibliothèque hors ligne (Wikipédia).")
+    else:
+        paragraphs.append(f"D'après {count} source{plural} lue{plural} en {report.duration_seconds:.0f} s.")
     return "\n\n".join(paragraphs)

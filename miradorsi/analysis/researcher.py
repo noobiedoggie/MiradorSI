@@ -268,7 +268,7 @@ class DeepAnalyzer:
                 title = set(content_terms(result.title))
                 if wanted and title:  # « Trou noir » pour « c'est quoi un trou noir ? »
                     value += 0.5 * len(wanted & title) / len(wanted | title)
-                lead = result.snippet[:160] if result.provider == "wikipedia" else ""
+                lead = result.snippet[:160] if result.provider in ("wikipedia", "bibliotheque") else ""
                 if is_off_topic_work(result.title, lead, report.question):
                     value *= 0.4
                 if key in scored:  # trouvé par plusieurs requêtes : signal de pertinence

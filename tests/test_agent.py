@@ -65,7 +65,7 @@ def test_small_talk_is_answered_without_web_search(tmp_path):
 
 
 def test_offline_answers_are_reliable_or_honest(tmp_path):
-    from miradorsi.agent import OFFLINE_LIMIT, calculate, is_insult
+    from miradorsi.agent import OFFLINE_LIMIT, PERSONAL_REPLY, calculate, is_insult
 
     assert calculate("1+1") == "1 + 1 = 2"
     assert calculate("combien font 12 x 7 ?") == "12 × 7 = 84"
@@ -81,5 +81,6 @@ def test_offline_answers_are_reliable_or_honest(tmp_path):
     agent.brain = object()  # un modèle est chargé : il ne doit plus inventer de réponse au hasard
     assert agent.handle("1+1") == "1 + 1 = 2"
     assert agent.handle("connard").startswith("Je reste poli.")
-    assert agent.handle("j'aime le caca et toi?") == OFFLINE_LIMIT
+    assert agent.handle("j'aime le caca et toi?") == PERSONAL_REPLY
+    assert agent.handle("C'est quoi la photosynthèse ?") == OFFLINE_LIMIT  # sans bibliothèque ni internet
     assert "Mirador SI" in agent.handle("Qui es-tu ?")

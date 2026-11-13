@@ -1,0 +1,86 @@
+name: Bibliothèque hors ligne
+
+# Construit la bibliothèque hors ligne de Mirador SI : les introductions et fiches des articles
+# de Wikipédia en français les plus consultés, indexées pour répondre sans internet.
+# Source : l'export « CirrusSearch » de Wikipédia (dumps.wikimedia.org), environ 15 Go.
+
+on:
+  workflow_dispatch:
+    inputs:
+      articles:
+        description: "Nombre d'articles (les plus consultés)"
+        default: "100000"
+  push:
+    paths:
+      - ".github/workflows/bibliotheque.yml"
+
+jobs:
+  construire:
+    name: Construire et publier la bibliothèque
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    permissions:
+      contents: write
+    env:
+      ARTICLES: ${{ github.event.inputs.articles || '100000' }}
+      UA: "MiradorSI-bibliotheque/0.4 (index hors ligne ; une seule lecture de l'export)"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dépendances
+        run: |
+          pip install numpy
+          sudo apt-get update -qq && sudo apt-get install -y -qq aria2 pigz
+
+      - name: Dernier export CirrusSearch
+        run: |
+          D=$(curl -s -A "$UA" https://dumps.wikimedia.org/other/cirrussearch/ | grep -o 'href="[0-9]\{8\}/' | grep -o '[0-9]\{8\}' | sort | tail -1)
+          echo "EXPORT=$D" >> "$GITHUB_ENV"
+          echo "Export du $D"
+
+      - name: Télécharger l'export (miroir et Wikimédia en parallèle)
+        run: |
+          F="frwiki-$EXPORT-cirrussearch-content.json.gz"
+          aria2c --user-agent="$UA" -x 2 -s 4 -k 64M --max-tries=8 --retry-wait=15 --summary-interval=120 \
+            -o export.json.gz \
+            "https://mirror.accum.se/mirror/wikimedia.org/other/cirrussearch/$EXPORT/$F" \
+            "https://dumps.wikimedia.org/other/cirrussearch/$EXPORT/$F"
+          ls -la export.json.gz
+
+      - name: Construire la bibliothèque
+        run: |
+          mkdir -p sortie
+          pigz -dc export.json.gz | python -m miradorsi bibliotheque --cirrus - --articles "$ARTICLES" \
+            --date "$(date -d "$EXPORT" +%Y-%m-%d)" --sortie sortie/bibliotheque-fr.db
+          rm -f export.json.gz
+
+      - name: Essais de questions hors ligne
+        run: |
+          python -m miradorsi bibliotheque --sortie sortie/bibliotheque-fr.db --question \
+            "C'est quoi un trou noir ?" "Quelle est la population de Lyon ?" "Qui était Marie Curie ?" \
+            "Quand a eu lieu la Révolution française ?" "Pourquoi le ciel est bleu ?" \
+            "Quelle est la capitale de l'Australie ?" "Qui a écrit Les Misérables ?" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publier en release « bibliotheque »
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAILLE=$(du -m sortie/bibliotheque-fr.db | cut -f1)
+          cat > notes.md <<NOTES
+          Bibliothèque hors ligne de Mirador SI : introductions et fiches des $ARTICLES articles de
+          Wikipédia en français les plus consultés (export du $EXPORT), indexées pour répondre sans
+          internet. Taille : $TAILLE Mo. L'application la télécharge depuis l'accueil.
+
+          Textes issus de Wikipédia, sous licence Creative Commons Attribution - Partage dans les
+          mêmes conditions 4.0 (https://creativecommons.org/licenses/by-sa/4.0/deed.fr) ; chaque réponse
+          de Mirador SI renvoie à l'article d'origine et à ses auteurs.
+          NOTES
+          gh release delete bibliotheque --yes --cleanup-tag || true
+          gh release create bibliotheque sortie/bibliotheque-fr.db --target "$GITHUB_SHA" --latest=false \
+            --title "Mirador SI — Bibliothèque hors ligne" --notes-file notes.md

@@ -185,6 +185,53 @@ def cmd_corpus_web(cfg, args) -> int:
     return 0 if files else 2
 
 
+def cmd_library(cfg, args) -> int:
+    """Construit la bibliothèque hors ligne, ou l'interroge (--question)."""
+    import gzip
+    import sys
+    import time
+
+    from .library import Library, LibraryBuilder, build_from_cirrus
+
+    out = Path(args.sortie) if args.sortie else cfg.path("library")
+    if args.question:
+        from .agent import MiradorAgent
+
+        agent = MiradorAgent.create(cfg, load_brain=False)
+        agent.use_library(Library(out))
+        print(agent.library.describe())
+        for question in args.question:
+            start = time.perf_counter()
+            text, _ = agent.offline_reply(question)
+            print(f"\n### {question} ({time.perf_counter() - start:.2f} s)\n{text}")
+        return 0
+    start = time.time()
+    if args.cirrus:
+        if args.cirrus == "-":
+            stream = sys.stdin.buffer
+        elif args.cirrus.endswith(".gz"):
+            stream = gzip.open(args.cirrus, "rb")
+        else:
+            stream = open(args.cirrus, "rb")
+        stats = build_from_cirrus(stream, out, args.articles, args.date, log=print)
+    else:  # à partir du corpus local (introductions des articles collectés) : pour les essais
+        from .web.extract import strip_reference_sections
+
+        builder = LibraryBuilder(out, "fr", "corpus local")
+        files = sorted((cfg.path("corpus") / "web").glob("*.txt"))[: args.articles]
+        for path in files:
+            title, _, body = path.read_text(encoding="utf-8").partition("\n\n")
+            lead = strip_reference_sections(body).split("\n\n")[0][:2500]
+            builder.add(title.strip(), lead, len(body) / 1e6)
+        stats = builder.close(args.date)
+    def n(x: int) -> str:
+        return f"{x:,}".replace(",", "\u202f")
+
+    print(f"Bibliothèque : {n(stats['articles'])} articles, {n(stats['mots'])} mots indexés, "
+          f"{stats['octets'] / 1e6:.1f} Mo, en {time.time() - start:.0f} s → {out}")
+    return 0
+
+
 def cmd_lexicon(cfg, args) -> int:
     from .analysis.lexicon import build_idf, save_lexicon
     from .model.train import load_corpus_documents
@@ -262,6 +309,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("lexique", help="recalculer la rareté des mots à partir du corpus"
                    ).set_defaults(func=cmd_lexicon)
+
+    p = sub.add_parser("bibliotheque", aliases=["library"],
+                       help="construire (ou interroger) la bibliothèque hors ligne")
+    p.add_argument("--cirrus", help="export CirrusSearch de Wikipédia (.json.gz, ou - pour l'entrée standard)")
+    p.add_argument("--articles", type=int, default=100_000, help="nombre d'articles gardés (les plus consultés)")
+    p.add_argument("--date", default="", help="date de l'export, affichée dans l'application")
+    p.add_argument("--sortie", help="fichier de sortie (par défaut : [paths].library)")
+    p.add_argument("--question", nargs="+", help="interroger la bibliothèque au lieu de la construire")
+    p.set_defaults(func=cmd_library)
     return parser
 
 

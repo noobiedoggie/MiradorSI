@@ -68,7 +68,11 @@ def words(text: str) -> list[str]:
 
 
 _IDIOMS = re.compile(r"\b(?:a|ont|avait|avaient|aura|auront|aurait|avoir|va avoir)\s+(?:eu\s+)?lieu\b|"
-                     r"\bse (?:passe|passait|trouve|situe)\b", re.I)
+                     r"\bse (?:passe|passait|trouve|situe)\b|"
+                     # formules de politesse et de demande : « peux-tu m'expliquer… », « dis-moi… »
+                     r"\b\w+-(?:t-)?(?:tu|vous|moi|nous|il|elle|on)\b|\b(?:m'|me |nous )?(?:expliquer|explique|dire|"
+                     r"raconter|raconte|parler|parle|donner|donne|apprendre)\b|\b(?:j'aimerais|je voudrais|je veux|"
+                     r"aimerais|voudrais) (?:savoir|comprendre|connaître|connaitre)\b", re.I)
 
 
 def strip_idioms(question: str) -> str:
@@ -80,14 +84,14 @@ def content_terms(text: str, stem: bool = True) -> list[str]:
     """Mots porteurs de sens : minuscules, sans accents, sans mots vides."""
     out = []
     for w in _WORD_RE.findall(text):
-        low = w.lower()
+        low = w.lower().replace("’", "'")
+        if "'" in low:  # l'énergie → énergie ; « qu'un », « c'est » → mots vides
+            low = low.split("'")[-1]
         if low in STOPWORDS or low in QUESTION_WORDS or len(low) < 2:
             continue
         if low.isdigit() and len(low) < 4:
             continue
         n = strip_accents(low)
-        if "'" in n:  # l'énergie → energie
-            n = n.split("'")[-1]
         out.append(light_stem(n) if stem else n)
     return out
 
