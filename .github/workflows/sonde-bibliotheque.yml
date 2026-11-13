@@ -1,0 +1,31 @@
+name: Sonde des sources de la bibliothèque
+
+on:
+  push:
+    paths:
+      - ".github/workflows/sonde-bibliotheque.yml"
+  workflow_dispatch:
+
+jobs:
+  sonde:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Sources de Wikipédia disponibles
+        run: |
+          set +e
+          UA="MiradorSI-bibliotheque/0.4 (construction d'un index hors ligne)"
+          echo "== cirrussearch"; curl -s -A "$UA" https://dumps.wikimedia.org/other/cirrussearch/ | grep -o 'href="[0-9]*/' | tail -5
+          D=$(curl -s -A "$UA" https://dumps.wikimedia.org/other/cirrussearch/ | grep -o 'href="[0-9]*/' | tail -1 | grep -o '[0-9]*')
+          curl -s -A "$UA" "https://dumps.wikimedia.org/other/cirrussearch/$D/" | grep -o 'frwiki-[^"]*' | sort -u | head
+          F="https://dumps.wikimedia.org/other/cirrussearch/$D/frwiki-$D-cirrussearch-content.json.gz"
+          curl -sI -A "$UA" "$F" | grep -iE "^HTTP|content-length"
+          curl -s -A "$UA" -r 0-400000 "$F" | zcat 2>/dev/null | head -c 2500; echo
+          echo "== frwiki latest"; curl -s -A "$UA" https://dumps.wikimedia.org/frwiki/latest/ | grep -oE 'frwiki-latest-(abstract|pages-articles|langlinks|page_props|page)[^"<]*' | sort -u | head -20
+          for f in frwiki-latest-abstract.xml.gz frwiki-latest-pages-articles.xml.bz2 frwiki-latest-langlinks.sql.gz frwiki-latest-page_props.sql.gz; do printf "%s " $f; curl -sI -A "$UA" https://dumps.wikimedia.org/frwiki/latest/$f | grep -i content-length || echo absent; done
+          echo "== enterprise html"; curl -s -A "$UA" https://dumps.wikimedia.org/other/enterprise_html/runs/ | grep -o 'href="[0-9]*/' | tail -3
+          E=$(curl -s -A "$UA" https://dumps.wikimedia.org/other/enterprise_html/runs/ | grep -o 'href="[0-9]*/' | tail -1 | grep -o '[0-9]*')
+          curl -s -A "$UA" "https://dumps.wikimedia.org/other/enterprise_html/runs/$E/" | grep -o 'frwiki-NS0[^"]*' | sort -u
+          echo "== huggingface"; curl -s "https://huggingface.co/api/datasets/wikimedia/wikipedia/tree/main" | python3 -c "import json,sys; print([d['path'] for d in json.load(sys.stdin) if '.fr' in d['path']])"
+          echo "== pageviews"; curl -s -A "$UA" "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/fr.wikipedia/all-access/2026/10/all-days" | head -c 600; echo
+          df -h / | tail -1; nproc
