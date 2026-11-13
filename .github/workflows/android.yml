@@ -108,9 +108,9 @@ jobs:
           import base64, io
           from PIL import Image
           image = Image.open("capture-accueil.png").convert("RGB")
-          image.thumbnail((150, 330))
+          image.thumbnail((300, 660))
           tampon = io.BytesIO()
-          image.save(tampon, "JPEG", quality=70)
+          image.save(tampon, "JPEG", quality=60)
           print("CAPTURE_JPEG_BASE64:" + base64.b64encode(tampon.getvalue()).decode())
           PY
           fi
