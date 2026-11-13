@@ -50,6 +50,8 @@ object MiradorIcons {
             "l-2.34,-2.34c-0.39,-0.39 -1.02,-0.39 -1.41,0l-1.83,1.83 3.75,3.75 1.83,-1.83z",
     )
 
+    val Download = filled("Download", "M19,9h-4V3H9v6H5l7,7 7,-7zM5,18v2h14v-2H5z")
+
     /** Le logo : une tour de guet, deux fenêtres allumées. */
     fun tower(frame: Color, light: Color): ImageVector =
         ImageVector.Builder("Mirador", 48.dp, 48.dp, 48f, 48f)

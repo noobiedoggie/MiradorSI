@@ -1,12 +1,14 @@
 package com.miradorsi.app
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.chaquo.python.Python
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 /** Vérifie, sur un vrai Android, que Python, numpy et le modèle embarqué fonctionnent. */
 @RunWith(AndroidJUnit4::class)
@@ -26,6 +28,26 @@ class MiradorEngineTest {
         engine.start()
         val reponse = engine.ask("Qui es-tu ?", Mode.LOCAL, 1, emptyList())
         assertTrue("réponse : ${reponse.text}", reponse.text.contains("Mirador"))
+    }
+
+    @Test
+    fun repondHorsLigneAvecLaBibliotheque() = runBlocking {
+        engine.start()
+        assertTrue("bibliothèque absente au départ", !engine.libraryState().installed)
+        // une mini-bibliothèque construite sur le téléphone même (SQLite + numpy sous Android)
+        val fichier = File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir, "essai-bibliotheque.db")
+        val module = Python.getInstance().getModule("miradorsi.library")
+        val constructeur = module.callAttr("LibraryBuilder", fichier.absolutePath, "fr", "essai")
+        constructeur.callAttr("add", "Trou noir", "En astrophysique, un trou noir est un objet céleste si compact " +
+            "que rien ne peut s'en échapper, pas même la lumière.", 1e-5)
+        constructeur.callAttr("add", "Lyon", "Lyon est une commune française située au confluent du Rhône et de " +
+            "la Saône, dans la région Auvergne-Rhône-Alpes.", 1e-6)
+        constructeur.callAttr("close")
+        val etat = engine.useLibrary(fichier)
+        assertTrue(etat.description, etat.installed && etat.description.startsWith("2 articles"))
+        val reponse = engine.ask("C'est quoi un trou noir ?", Mode.LOCAL, 1, emptyList())
+        assertTrue(reponse.text, reponse.text.startsWith("En astrophysique, un trou noir"))
+        assertEquals("Trou noir", reponse.sources.first().title)
     }
 
     @Test

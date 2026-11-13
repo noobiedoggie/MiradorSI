@@ -50,6 +50,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -99,6 +100,15 @@ private val Texte2 = Color(0xFFA0A6AA)
 private val Texte3 = Color(0xFF6E7579)
 private val Orange = Color(0xFFE05A22)
 
+/** Bibliothèque hors ligne : articles de Wikipédia téléchargés sur le téléphone. */
+private sealed interface HorsLigne {
+    data object Inconnue : HorsLigne
+    data object Absente : HorsLigne
+    data class Telechargement(val fait: Long, val total: Long) : HorsLigne
+    data class Installee(val description: String) : HorsLigne
+    data class Erreur(val message: String) : HorsLigne
+}
+
 private sealed interface Ecran {
     data object Accueil : Ecran
     data object Bibliotheque : Ecran
@@ -131,6 +141,8 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
     var profondeur by remember { mutableStateOf(2) }
     var occupe by remember { mutableStateOf(false) }
     var aPropos by remember { mutableStateOf(false) }
+    var horsLigne by remember { mutableStateOf<HorsLigne>(HorsLigne.Inconnue) }
+    var confirmerTelechargement by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         etat = try {
@@ -139,6 +151,21 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
             if (i.hasModel) "${i.model} · hors ligne" else "Analyse sur internet prête"
         } catch (e: Throwable) {
             "Démarrage impossible : ${e.message}"
+        }
+        horsLigne = runCatching { engine.libraryState() }.getOrNull()
+            ?.let { if (it.installed) HorsLigne.Installee(it.description) else HorsLigne.Absente }
+            ?: HorsLigne.Absente
+    }
+
+    fun telechargerBibliotheque() {
+        horsLigne = HorsLigne.Telechargement(0, 0)
+        scope.launch {
+            horsLigne = try {
+                val etatFinal = engine.downloadLibrary { fait, total -> horsLigne = HorsLigne.Telechargement(fait, total) }
+                HorsLigne.Installee(etatFinal.description)
+            } catch (e: Throwable) {
+                HorsLigne.Erreur(e.message ?: "erreur inconnue")
+            }
         }
     }
 
@@ -223,6 +250,8 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
                 onOuvrir = { ecran = Ecran.Discussion(it.id) }, onSupprimer = { supprimer(it) },
                 onAPropos = { aPropos = true }, onBibliotheque = { ecran = Ecran.Bibliotheque },
                 onNouvelle = { saisie = "" }, composer = { composer(null) },
+                horsLigne = horsLigne,
+                onHorsLigne = { if (horsLigne is HorsLigne.Absente || horsLigne is HorsLigne.Erreur) confirmerTelechargement = true },
             )
             Ecran.Bibliotheque -> Bibliotheque(
                 conversations = conversations, onRetour = { ecran = Ecran.Accueil },
@@ -237,6 +266,24 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
             }
         }
         if (aPropos) APropos(info, onFermer = { aPropos = false })
+        if (confirmerTelechargement) AlertDialog(
+            onDismissRequest = { confirmerTelechargement = false },
+            containerColor = Carte, titleContentColor = Texte, textContentColor = Texte2,
+            title = { Text("Bibliothèque hors ligne") },
+            text = {
+                Text("Mirador télécharge les introductions et les fiches des 100 000 articles de Wikipédia " +
+                    "les plus consultés (environ 100 Mo, Wi-Fi conseillé). Ensuite, il répond à tes questions " +
+                    "même sans internet, en citant l'article d'origine.")
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmerTelechargement = false; telechargerBibliotheque() }) {
+                    Text("Télécharger", color = SarcelleClaire)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmerTelechargement = false }) { Text("Plus tard", color = Texte2) }
+            },
+        )
     }
 }
 
@@ -246,7 +293,7 @@ private fun Accueil(
     info: EngineInfo?, etat: String, conversations: List<Conversation>,
     onOuvrir: (Conversation) -> Unit, onSupprimer: (Conversation) -> Unit,
     onAPropos: () -> Unit, onBibliotheque: () -> Unit, onNouvelle: () -> Unit,
-    composer: @Composable () -> Unit,
+    composer: @Composable () -> Unit, horsLigne: HorsLigne = HorsLigne.Inconnue, onHorsLigne: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -260,6 +307,7 @@ private fun Accueil(
             BoutonRond(MiradorIcons.Library, "Bibliothèque", onBibliotheque)
         }
         Bandeau(etat, onAPropos)
+        BandeauHorsLigne(horsLigne, onHorsLigne)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Image(MiradorIcons.tower(Sarcelle, Orange), contentDescription = info?.name ?: "Mirador SI",
                 modifier = Modifier.size(96.dp))
@@ -267,6 +315,41 @@ private fun Accueil(
         conversations.take(5).forEach { LigneConversation(it, onOuvrir, onSupprimer) }
         Spacer(Modifier.height(8.dp))
         composer()
+    }
+}
+
+@Composable
+private fun BandeauHorsLigne(etat: HorsLigne, onClick: () -> Unit) {
+    if (etat is HorsLigne.Inconnue) return
+    Column(
+        Modifier.padding(horizontal = 16.dp, vertical = 2.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp))
+            .background(Carte).border(1.dp, Bordure, RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (etat is HorsLigne.Installee) MiradorIcons.Library else MiradorIcons.Download, null,
+                tint = if (etat is HorsLigne.Erreur) Orange else SarcelleClaire, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(12.dp))
+            val texte = when (etat) {
+                is HorsLigne.Absente -> "Bibliothèque hors ligne · Télécharger"
+                is HorsLigne.Telechargement -> if (etat.total > 0)
+                    "Téléchargement… ${etat.fait * 100 / etat.total} % (${etat.total / 1_000_000} Mo)"
+                else "Téléchargement… ${etat.fait / 1_000_000} Mo"
+                is HorsLigne.Installee -> "Bibliothèque : ${etat.description}"
+                is HorsLigne.Erreur -> "Échec du téléchargement (${etat.message}) · Réessayer"
+                HorsLigne.Inconnue -> ""
+            }
+            Text(texte, color = Texte2, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (etat is HorsLigne.Telechargement) {
+            Spacer(Modifier.height(8.dp))
+            if (etat.total > 0) {
+                LinearProgressIndicator(progress = { etat.fait.toFloat() / etat.total }, color = SarcelleClaire,
+                    trackColor = Bordure, modifier = Modifier.fillMaxWidth())
+            } else {
+                LinearProgressIndicator(color = SarcelleClaire, trackColor = Bordure, modifier = Modifier.fillMaxWidth())
+            }
+        }
     }
 }
 

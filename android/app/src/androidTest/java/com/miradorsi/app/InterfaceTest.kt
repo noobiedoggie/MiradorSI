@@ -38,6 +38,7 @@ class InterfaceTest {
         regle.onNodeWithContentDescription("Analyse sur internet").assertIsDisplayed()
         regle.onNodeWithContentDescription("Modèle local").assertIsDisplayed()
         regle.onNodeWithContentDescription("Dicter").assertIsDisplayed()
+        attendreTexte("Bibliothèque")  # bandeau de la bibliothèque hors ligne
     }
 
     @Test
