@@ -173,3 +173,12 @@ def test_training_mixes_identity_dialogues_into_large_corpus(tmp_path):
     train(cfg, steps=4, fresh=True, log=logs.append)
     assert any(line.startswith("Mélange : 1/5") for line in logs)
     assert any("★ meilleur" in line for line in logs)
+
+
+def test_repetition_penalty_discourages_recent_tokens():
+    from miradorsi.model.streaming import penalize_repetition
+
+    logits = np.array([2.0, 1.0, -1.0, 0.5])
+    out = penalize_repetition(logits, [0, 2, 0], 2.0)
+    assert out[0] == 1.0 and out[2] == -2.0 and out[1] == 1.0     # positifs divisés, négatifs multipliés
+    assert np.array_equal(penalize_repetition(logits, [0], 1.0), logits)

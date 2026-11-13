@@ -1,0 +1,161 @@
+# Deuxième série de sujets (culture générale) pour enrichir le corpus.
+# Sciences de la nature et de l'univers
+Atome
+Molécule
+Cellule (biologie)
+Acide désoxyribonucléique
+Photosynthèse
+Gravitation
+Relativité générale
+Thermodynamique
+Lumière
+Son (physique)
+Magnétisme
+Système solaire
+Soleil
+Lune
+Mars (planète)
+Étoile
+Galaxie
+Big Bang
+Trou noir
+Dinosauria
+Mammifère
+Oiseau
+Insecte
+Arbre
+Forêt
+Désert
+Montagne
+Fleuve
+Mer Méditerranée
+Biodiversité
+Pollution
+Recyclage
+Énergie éolienne
+Pétrole
+Accumulateur électrique
+# Techniques et santé
+Ordinateur
+Algorithme
+Programmation informatique
+Réseau de neurones artificiels
+Apprentissage automatique
+Robotique
+Téléphone mobile
+Satellite artificiel
+Fusée
+Télescope
+Microscope
+Antibiotique
+Maladie infectieuse
+Cancer
+Cœur
+Sommeil
+Nutrition
+Psychologie
+Sociologie
+Linguistique
+Nombre premier
+Géométrie
+Probabilité
+# Histoire
+Préhistoire
+Égypte antique
+Charlemagne
+Croisades
+Jeanne d'Arc
+Louis XIV
+Siècle des Lumières
+Commune de Paris
+Belle Époque
+Résistance intérieure française
+Cinquième République
+Mai 68
+Chute du mur de Berlin
+Guerre d'Algérie
+Empire ottoman
+Empire mongol
+Révolution russe
+Révolution américaine
+Traite négrière
+Apartheid
+# Arts et personnalités
+Peinture
+Impressionnisme
+Sculpture
+Architecture
+Théâtre
+Poésie
+Roman (littérature)
+Bande dessinée
+Photographie
+Opéra
+Jazz
+Danse
+Victor Hugo
+Molière
+Albert Camus
+Marie Curie
+Louis Pasteur
+Albert Einstein
+Isaac Newton
+Charles Darwin
+Léonard de Vinci
+Pablo Picasso
+Wolfgang Amadeus Mozart
+# Géographie
+Lyon
+Marseille
+Bretagne
+Provence
+Corse
+Alpes
+Loire
+Seine
+Afrique de l'Ouest
+Côte d'Ivoire
+Algérie
+Tunisie
+Madagascar
+Royaume-Uni
+Espagne
+Italie
+Russie
+Mexique
+Argentine
+Australie
+Antarctique
+Océan Atlantique
+Amazonie
+# Société
+Économie de marché
+Entreprise
+Banque
+Monnaie
+Euro
+Impôt
+Commerce international
+Travail
+Syndicat
+Élection
+Parlement
+Justice
+Droit
+Religion
+Laïcité
+Famille
+Ville
+Agriculture biologique
+Alimentation
+Cuisine française
+Football
+Tour de France
+Tourisme
+Télévision
+Radio
+Presse écrite
+Réseau social
+Publicité
+Sécurité informatique
+Vie privée

@@ -47,11 +47,13 @@ class Brain:
                 break
             turns.pop(0)
         out = self.model.generate(prompt_ids, self.gen.max_new_tokens, self.gen.temperature,
-                                  self.gen.top_k, self.gen.top_p, self.stop_ids, self.rng)
+                                  self.gen.top_k, self.gen.top_p, self.stop_ids, self.rng,
+                                  repetition_penalty=self.gen.repetition_penalty)
         return self.tokenizer.decode(out, skip_special=True).strip()
 
     def complete(self, text: str, max_new_tokens: int | None = None) -> str:
         ids = self.tokenizer.encode(text)
         out = self.model.generate(ids, max_new_tokens or self.gen.max_new_tokens, self.gen.temperature,
-                                  self.gen.top_k, self.gen.top_p, {self.tokenizer.end_id}, self.rng)
+                                  self.gen.top_k, self.gen.top_p, {self.tokenizer.end_id}, self.rng,
+                                  repetition_penalty=self.gen.repetition_penalty)
         return self.tokenizer.decode(out, skip_special=True)

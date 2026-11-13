@@ -27,13 +27,13 @@ def softmax(x: Tensor, axis: int = -1) -> Tensor:
 def gelu(x: Tensor) -> Tensor:
     """GELU (approximation tanh, comme GPT-2)."""
     v = x.data
-    inner = _GELU_K * (v + 0.044715 * v ** 3)
-    t = np.tanh(inner)
+    v2 = v * v                       # v*v*v est bien plus rapide que v ** 3
+    t = np.tanh(_GELU_K * (v + 0.044715 * v2 * v))
     y = 0.5 * v * (1.0 + t)
 
     def backward(g):
-        d_inner = _GELU_K * (1.0 + 3 * 0.044715 * v ** 2)
-        dy = 0.5 * (1.0 + t) + 0.5 * v * (1.0 - t ** 2) * d_inner
+        d_inner = _GELU_K * (1.0 + 3 * 0.044715 * v2)
+        dy = 0.5 * (1.0 + t) + 0.5 * v * (1.0 - t * t) * d_inner
         x.accumulate(g * dy)
 
     return Tensor.from_op(y, (x,), backward, "gelu")
@@ -60,8 +60,13 @@ def embedding(weight: Tensor, indices: np.ndarray) -> Tensor:
     indices = np.asarray(indices, dtype=np.int64)
 
     def backward(g):
+        # Somme des gradients par token : tri + réduction par segments (bien plus rapide que add.at)
+        flat = indices.reshape(-1)
+        rows = g.reshape(-1, weight.data.shape[-1])
+        order = np.argsort(flat, kind="stable")
+        tokens, starts = np.unique(flat[order], return_index=True)
         full = np.zeros_like(weight.data)
-        np.add.at(full, indices.reshape(-1), g.reshape(-1, weight.data.shape[-1]))
+        full[tokens] = np.add.reduceat(rows[order], starts, axis=0)
         weight.accumulate(full)
 
     return Tensor.from_op(weight.data[indices], (weight,), backward, "embedding")
@@ -77,12 +82,15 @@ def cross_entropy(logits: Tensor, targets: np.ndarray, ignore_index: int = -1) -
     safe_targets = np.where(valid, targets, 0)
 
     shifted = flat - flat.max(axis=-1, keepdims=True)
-    log_sum = np.log(np.exp(shifted).sum(axis=-1))
+    exp = np.exp(shifted)            # calculée une seule fois, réutilisée au backward
+    total = exp.sum(axis=-1)
+    log_sum = np.log(total)
     picked = shifted[np.arange(flat.shape[0]), safe_targets]
     loss = ((log_sum - picked) * valid).sum() / count
+    del shifted
 
     def backward(g):
-        probs = np.exp(shifted - log_sum[:, None])
+        probs = exp / total[:, None]
         probs[np.arange(flat.shape[0]), safe_targets] -= 1.0
         probs *= (valid / count)[:, None]
         logits.accumulate((probs * g).reshape(logits.data.shape))

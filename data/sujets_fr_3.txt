@@ -1,0 +1,166 @@
+# Troisième série : titres exacts d'articles (collecte groupée : mirador corpus-web --exact)
+Terre
+Atmosphère terrestre
+Cycle de l'eau
+Tectonique des plaques
+Glacier
+Énergie
+Électron
+Proton
+Neutron
+Tableau périodique des éléments
+Oxygène
+Carbone
+Fer
+Or
+Hydrogène
+Plastique
+Verre
+Béton
+Acier
+Moteur à combustion interne
+Machine à vapeur
+Électricité statique
+Transistor
+Microprocesseur
+Logiciel
+Système d'exploitation
+Base de données
+World Wide Web
+Moteur de recherche
+Logiciel libre
+Cryptographie
+Chiffrement
+Mathématicien
+Algèbre
+Calcul infinitésimal
+Théorème de Pythagore
+Nombre réel
+Infini
+Logique
+Raisonnement
+Philosophie des sciences
+Épistémologie
+Morale
+Liberté
+Vérité
+Connaissance
+Langage
+Écriture
+Alphabet latin
+Imprimerie
+Livre
+Bibliothèque
+École
+Université
+Science
+Recherche scientifique
+Expérience scientifique
+Hypothèse
+Théorie
+Biais cognitif
+Rumeur
+Propagande
+Fausse nouvelle
+Vérification des faits
+Opinion publique
+Information
+Communication
+Sciences politiques
+État
+Nation
+République
+Monarchie
+Dictature
+Révolution
+Guerre
+Paix
+Diplomatie
+Organisation du traité de l'Atlantique nord
+Conseil de sécurité des Nations unies
+Mondialisation économique
+Capitalisme
+Socialisme
+Libéralisme
+Marché (économie)
+Produit intérieur brut
+Croissance économique
+Pauvreté
+Inégalités économiques
+Dette publique
+Banque centrale européenne
+Bourse (économie)
+Entreprise multinationale
+Industrie
+Commerce
+Agriculture en France
+Démographie
+Population mondiale
+Migration humaine
+Urbanisation
+Logement
+Santé
+Hôpital
+Pandémie de Covid-19
+Vaccination
+Médicament
+Nutrition humaine
+Sport en France
+Jeux vidéo
+Internet en France
+Smartphone
+Intelligence artificielle générative
+Robot
+Voiture électrique
+Train à grande vitesse
+Métro de Paris
+Tour Eiffel
+Château de Versailles
+Musée du Louvre
+Notre-Dame de Paris
+Mont Saint-Michel
+Toulouse
+Bordeaux
+Lille
+Strasbourg
+Nice
+Nantes
+Normandie
+Occitanie
+Auvergne-Rhône-Alpes
+Massif central
+Pyrénées
+Rhône
+Garonne
+Océan Pacifique
+Océan Indien
+Asie du Sud-Est
+Moyen-Orient
+Amérique latine
+Afrique du Nord
+Afrique subsaharienne
+Union africaine
+Francophonie
+Organisation internationale de la francophonie
+Belgique francophone
+Suisse romande
+Haïti
+Cameroun
+République démocratique du Congo
+Mali
+Liban
+Vietnam
+Corée du Sud
+Indonésie
+Turquie
+Iran
+Égypte
+Nigeria
+Afrique du Sud
+Pologne
+Pays-Bas
+Grèce
+Portugal
+Suède
+Norvège
+Ukraine

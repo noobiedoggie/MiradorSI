@@ -37,7 +37,15 @@ MODELES = [
 ]
 # Disposition : de chaque côté, les racines peu profondes s'étalent loin et les profondes
 # restent près du centre (comme un vrai système racinaire) : aucune étiquette n'est traversée.
-MIRADOR_SI = ("Mirador SI · Vigie", 2.47e6, 1290)
+# Ton modèle : mets à jour ces valeurs à chaque nouvelle version entraînée.
+MIRADOR_SI = {
+    "nom": "Mirador SI v0.3 · Vigie",
+    "params": 4.26e6,
+    "x": 1290,
+    "lignes": ["4,3 M de paramètres · {taille} compressé", "créé de zéro · s'entraîne et tourne sur un simple PC"],
+    "taille": "4,0 Mo",
+    "precedent": ("v0.2", 2.47e6),   # ancienne version, repérée sur la même racine
+}
 POINTE = [("Claude", 820), ("GPT", 950), ("Gemini", 1080)]   # taille non publiée
 POINTE_EXP = 12.3         # sert seulement à doser l'épaisseur des racines
 HORS_ECHELLE = SOL + (12.0 - EXP0) * DECADE + 32   # début de la zone « taille non publiée »
@@ -180,16 +188,24 @@ def construire() -> str:
         s.append(texte(x + dx, y + 22, info, 17, ENCRE_2, 400, ancre))
 
     # --- Mirador SI : la racine mise en valeur
-    nom, params, x = MIRADOR_SI
+    nom, params, x = MIRADOR_SI["nom"], MIRADOR_SI["params"], MIRADOR_SI["x"]
     y = y_de(params)
-    s.append(racine((x, y), 7, MIRADOR, rng))
+    s.append(racine((x, y), 8, MIRADOR, rng))
+    if MIRADOR_SI.get("precedent"):  # l'ancienne version : un repère sur la même racine
+        label_prec, params_prec = MIRADOR_SI["precedent"]
+        y_prec = y_de(params_prec)
+        pts = controles((x, y))
+        t = min((i / 400 for i in range(401)), key=lambda t: abs(bezier(*pts, t)[1] - y_prec))
+        px, py = bezier(*pts, t)
+        s.append(f'<circle cx="{px:.1f}" cy="{py:.1f}" r="6" fill="{TERRE_HAUT}" stroke="{MIRADOR}" stroke-width="2.5"/>')
+        s.append(texte(px - 12, py - 10, label_prec, 14, ENCRE_2, 600, "end"))
     s.append(marqueur(x, y, MIRADOR))
     s.append(f'<rect x="{x + 20}" y="{y - 46}" width="122" height="24" rx="12" fill="{MIRADOR}"/>')
     s.append(f'<text x="{x + 81}" y="{y - 29}" font-size="13" font-weight="700" fill="#ffffff" '
              f'text-anchor="middle" letter-spacing="1">TON MODÈLE</text>')
     s.append(texte(x + 20, y + 8, nom, 24, ENCRE, 700))
-    s.append(texte(x + 20, y + 33, "2,5 M de paramètres · 2,4 Mo compressé", 17, ENCRE_2))
-    s.append(texte(x + 20, y + 56, "créé de zéro · s'entraîne et tourne sur un simple PC", 17, ENCRE_2))
+    for i, ligne in enumerate(MIRADOR_SI["lignes"]):
+        s.append(texte(x + 20, y + 33 + 23 * i, ligne.format(taille=MIRADOR_SI["taille"]), 17, ENCRE_2))
 
     # --- arbre (surface)
     s.append(f'<path d="M{TRONC_X - 17},{SOL + 3} C{TRONC_X - 10},{SOL - 30} {TRONC_X - 9},{SOL - 55} '

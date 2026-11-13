@@ -160,8 +160,12 @@ def cmd_corpus_web(cfg, args) -> int:
     if args.topics_file:
         topics += [l.strip() for l in Path(args.topics_file).read_text(encoding="utf-8").splitlines()
                    if l.strip() and not l.lstrip().startswith("#")]
-    files = build_web_corpus(topics, WikipediaSearch(client, [args.lang]), Fetcher(client),
-                             out_dir, args.lang, args.per_topic, args.max_chars)
+    if args.exact:
+        from .model.corpus import build_wikipedia_bulk
+        files = build_wikipedia_bulk(topics, client, out_dir, args.lang, args.max_chars)
+    else:
+        files = build_web_corpus(topics, WikipediaSearch(client, [args.lang]), Fetcher(client),
+                                 out_dir, args.lang, args.per_topic, args.max_chars)
     print(f"{len(files)} document(s) ajouté(s). Relance `mirador train --retrain-tokenizer` pour apprendre.")
     cmd_lexicon(cfg, args)
     return 0 if files else 2
@@ -235,6 +239,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lang", default="fr")
     p.add_argument("--per-topic", type=int, default=3)
     p.add_argument("--max-chars", type=int, default=60_000, help="taille max par article")
+    p.add_argument("--exact", action="store_true",
+                   help="les sujets sont des titres exacts : collecte groupée (10 articles par requête)")
     p.set_defaults(func=cmd_corpus_web)
 
     sub.add_parser("lexique", help="recalculer la rareté des mots à partir du corpus"

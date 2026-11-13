@@ -24,8 +24,10 @@ pip install -e .            # installe la commande `mirador`
 # (ou, sans installation : python -m miradorsi <commande>)
 
 mirador info                # identité et état du modèle
-mirador corpus-web --topics-file data/sujets_fr.txt   # ~150 articles Wikipédia (~25 min)
-mirador train --int8        # entraîne le réseau (~35 min sur un CPU 4 cœurs) + version compressée
+mirador corpus-web --topics-file data/sujets_fr.txt            # ~150 articles (recherche, ~25 min)
+mirador corpus-web --exact --topics-file data/sujets_fr_2.txt  # titres exacts : 10 articles par requête
+mirador corpus-web --exact --topics-file data/sujets_fr_3.txt  # (~1 min chacun)
+mirador train --int8        # entraîne le réseau (~1 h 30 sur un CPU 4 cœurs) + version compressée
 mirador chat                # conversation interactive
 mirador bench               # compare les architectures sur TON PC (~15 min)
 mirador quantize            # compresse un modèle entraîné en int8 (~4× plus petit)
@@ -130,7 +132,34 @@ Garanties vérifiées par les tests :
 Le Transformer de la v0.1 reste disponible : `arch = "transformer"` dans `config/mirador.toml`
 ou `mirador train --arch transformer`.
 
-### Entraîné sur un vrai corpus
+### v0.3 : un modèle plus puissant, toujours compact
+
+| | v0.2 | **v0.3** |
+|---|---|---|
+| Paramètres | 2,5 M (d=288) | **4,3 M** (d=384, attention locale de 128 tokens) |
+| Corpus d'entraînement | 153 articles, 1,6 M tokens | **474 articles, 5,2 M tokens** (19 M caractères) |
+| Entraînement | 1 500 étapes (6 M tokens vus) | **4 000 étapes** (16 M tokens vus), ~1 h 30 sur CPU |
+| **Bits par caractère** sur 24 articles inédits pour les deux ↓ | 1,703 | **1,483 (−13 %)** |
+| Fichier int8 (même score que la version complète) | 2,4 Mo | 4,0 Mo |
+| Génération sur CPU, un token à la fois | ~250 tokens/s | ~150 tokens/s |
+
+Ce qui a rendu cela possible :
+- **Un moteur 37 % plus rapide**, à résultats identiques (gradients vérifiés) :
+  - un seul grand produit matriciel par couche au lieu d'un par lot ;
+  - plus de copies inutiles de gradients ;
+  - une GELU sans puissance générique ;
+  - une exponentielle de la softmax réutilisée.
+- **La collecte groupée** (`corpus-web --exact`) : 10 articles Wikipédia par requête, convertis du
+  wikitexte en texte propre. 290 articles en une minute au lieu de deux heures, avec bien moins de
+  requêtes vers Wikipédia.
+- **Une pénalité de répétition** à la génération (`repetition_penalty`), qui supprime les
+  boucles du type « en France, en France, en France… ».
+
+En pratique, la v0.3 reste dans le sujet de son amorce (la Lune → planètes, Soleil), là où la v0.2
+partait n'importe où. Mais **les faits qu'elle écrit restent inventés** : à 4 M de paramètres,
+elle a appris la forme du français encyclopédique, pas encore le savoir.
+
+### Historique : premier entraînement sur Wikipédia (v0.2)
 
 `mirador corpus-web --topics-file data/sujets_fr.txt` collecte des articles de Wikipédia en
 français sur 81 sujets de culture générale. Résultats obtenus avec Vigie (2,5 M de paramètres,
@@ -240,7 +269,7 @@ Garde-fous :
 
 ## Limites actuelles, en toute franchise
 
-- **Le réseau de neurones reste petit (2,5 M de paramètres) et a lu 1,6 M de tokens.** Il connaît
+- **Le réseau de neurones reste petit (4,3 M de paramètres) et a lu 5,2 M de tokens.** Il connaît
   son identité et écrit un français plausible mot à mot, mais il ne « raisonne » pas et ne sait
   pas répondre à une question de culture générale. Un grand modèle a des milliards de paramètres
   et lit des milliers de milliards de tokens. Pour progresser : plus d'articles

@@ -119,7 +119,9 @@ class Tensor:
         if grad.shape != self.data.shape:
             grad = unbroadcast(grad, self.data.shape)
         if self.grad is None:
-            self.grad = np.array(grad, dtype=self.data.dtype, copy=True)
+            # Pas de copie : aucune opération ne modifie un gradient reçu sur place
+            # (on remplace toujours `self.grad` par un nouveau tableau).
+            self.grad = grad if grad.dtype == self.data.dtype else grad.astype(self.data.dtype)
         else:
             self.grad = self.grad + grad
 
@@ -220,6 +222,20 @@ class Tensor:
     def __matmul__(self, other) -> "Tensor":
         other = as_tensor(other)
         a, b = self.data, other.data
+        if b.ndim == 2 and a.ndim > 2:
+            # (…, T, C) @ (C, D) : un seul grand produit matriciel au lieu d'un par lot,
+            # et le gradient du poids sans somme sur les lots.
+            lead = a.shape[:-1]
+            a2 = a.reshape(-1, a.shape[-1])
+
+            def backward2d(g):
+                g2 = g.reshape(-1, g.shape[-1])
+                if self.requires_grad:
+                    self.accumulate((g2 @ b.T).reshape(a.shape))
+                if other.requires_grad:
+                    other.accumulate(a2.T @ g2)
+
+            return Tensor.from_op((a2 @ b).reshape(*lead, b.shape[-1]), (self, other), backward2d, "matmul")
 
         def backward(g):
             if self.requires_grad:

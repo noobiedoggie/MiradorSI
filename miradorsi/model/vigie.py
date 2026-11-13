@@ -203,8 +203,8 @@ class Vigie(Module):
 
     def generate(self, prompt_ids: list[int], max_new_tokens: int = 200, temperature: float = 0.8,
                  top_k: int | None = 40, top_p: float | None = 0.95, stop_ids: set[int] | None = None,
-                 rng: np.random.Generator | None = None) -> list[int]:
-        return S.generate(self, prompt_ids, max_new_tokens, temperature, top_k, top_p, stop_ids, rng)
+                 rng: np.random.Generator | None = None, **options) -> list[int]:
+        return S.generate(self, prompt_ids, max_new_tokens, temperature, top_k, top_p, stop_ids, rng, **options)
 
 
 class VigieRuntime:

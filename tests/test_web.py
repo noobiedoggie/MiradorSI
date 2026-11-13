@@ -125,3 +125,46 @@ def test_client_honors_retry_after(server, tmp_path):
     with pytest.raises(WebError, match="429"):
         fresh.get(server + "/attente")                            # 1 h demandée : abandon immédiat
     assert time.monotonic() - start < 2
+
+
+def test_wikitext_to_text():
+    from miradorsi.model.corpus import wikitext_to_text
+
+    wikitext = """{{Infobox Pays|nom=France|capitale=[[Paris]]}}
+La '''France''' est un [[État]] souverain<ref>Source.</ref> d'[[Europe de l'Ouest|Europe occidentale]].
+[[Fichier:Drapeau.svg|vignette|Le [[drapeau de la France]].]]
+== Géographie ==
+{| class="wikitable"
+| a || b
+|}
+* Paris compte {{unité|2.1|millions}} d'habitants au {{s|XXI}}, depuis le {{date|14|juillet|1789}}.
+Voir [https://example.org le site].<!-- caché -->
+[[Catégorie:Pays d'Europe]]"""
+    text = wikitext_to_text(wikitext)
+    assert "La France est un État souverain d'Europe occidentale." in text
+    assert "Paris compte 2.1 millions d'habitants au XXIe siècle, depuis le 14 juillet 1789." in text
+    assert "Voir le site." in text and "\nGéographie\n" in text
+    for noise in ("{{", "[[", "<ref", "wikitable", "Fichier", "Catégorie", "caché", "'''"):
+        assert noise not in text
+
+
+def test_bulk_wikipedia_follows_redirects(tmp_path):
+    from miradorsi.model.corpus import build_wikipedia_bulk
+    from miradorsi.web.http import HttpResponse
+
+    long_text = "Le '''Soleil''' est l'étoile du [[Système solaire]]. " * 60
+
+    class Client:
+        calls = 0
+
+        def get(self, url, params=None, **kw):
+            Client.calls += 1
+            data = {"query": {"redirects": [{"from": "Astre du jour", "to": "Soleil"}],
+                              "pages": [{"title": "Soleil", "revisions": [{"slots": {"main": {"content": long_text}}}]},
+                                        {"title": "Inexistant", "missing": True}]}}
+            return HttpResponse(url, 200, {"content-type": "application/json"},
+                                __import__("json").dumps(data).encode())
+
+    files = build_wikipedia_bulk(["Astre du jour", "Inexistant"], Client(), tmp_path, log=lambda m: None)
+    assert [f.name for f in files] == ["soleil.txt"] and Client.calls == 1   # une seule requête
+    assert files[0].read_text(encoding="utf-8").startswith("Soleil\n\nLe Soleil est l'étoile du Système solaire.")

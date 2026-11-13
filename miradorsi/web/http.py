@@ -96,7 +96,7 @@ class WebClient:
 
     # ------------------------------------------------------------------ API
     def get(self, url: str, params: dict | None = None, headers: dict | None = None,
-            use_cache: bool = True, check_robots: bool = True) -> HttpResponse:
+            use_cache: bool = True, check_robots: bool = True, max_bytes: int | None = None) -> HttpResponse:
         if params:
             url = f"{url}{'&' if '?' in url else '?'}{urllib.parse.urlencode(params)}"
         scheme = urllib.parse.urlsplit(url).scheme
@@ -115,7 +115,7 @@ class WebClient:
         for attempt in range(self.cfg.retries + 1):
             try:
                 self._wait_politely(url)
-                response = self._request(url, headers or {})
+                response = self._request(url, headers or {}, max_bytes or self.cfg.max_bytes)
                 if host in self._host_delay:  # tout va bien : on réaccélère progressivement
                     relaxed = self._host_delay[host] * 0.8
                     if relaxed <= self.cfg.min_delay_seconds:
@@ -142,7 +142,7 @@ class WebClient:
         raise WebError(f"Échec de {url} : {last_error}")
 
     # ------------------------------------------------------------ interne
-    def _request(self, url: str, headers: dict) -> HttpResponse:
+    def _request(self, url: str, headers: dict, max_bytes: int) -> HttpResponse:
         all_headers = {
             "User-Agent": self.cfg.user_agent,
             "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,text/plain;q=0.8,*/*;q=0.5",
@@ -153,15 +153,15 @@ class WebClient:
         request = urllib.request.Request(url, headers=all_headers)
         try:
             with self.opener.open(request, timeout=self.cfg.timeout_seconds) as resp:
-                body = resp.read(self.cfg.max_bytes + 1)
+                body = resp.read(max_bytes + 1)
                 status = resp.status
                 final_url = resp.geturl()
                 resp_headers = {k.lower(): v for k, v in resp.headers.items()}
         except urllib.error.HTTPError as err:
             retry_after = _parse_retry_after(err.headers.get("Retry-After") if err.headers else None)
             raise HttpStatusError(err.code, url, retry_after) from err
-        if len(body) > self.cfg.max_bytes:
-            body = body[: self.cfg.max_bytes]
+        if len(body) > max_bytes:
+            body = body[:max_bytes]
         encoding = resp_headers.get("content-encoding", "").lower()
         try:
             if encoding == "gzip":

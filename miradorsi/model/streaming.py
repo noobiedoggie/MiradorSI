@@ -46,9 +46,21 @@ def apply_rope(v: np.ndarray, cos: np.ndarray, sin: np.ndarray) -> np.ndarray:
     return v * cos + rotated * sin
 
 
+def penalize_repetition(logits: np.ndarray, recent: list[int], penalty: float) -> np.ndarray:
+    """Rend moins probables les tokens déjà produits récemment (évite « en France, en France… »)."""
+    if penalty == 1.0 or not recent:
+        return logits
+    logits = logits.copy()
+    ids = np.fromiter(set(recent), dtype=np.int64)
+    values = logits[ids]
+    logits[ids] = np.where(values > 0, values / penalty, values * penalty)
+    return logits
+
+
 def generate(model, prompt_ids: list[int], max_new_tokens: int = 200, temperature: float = 0.8,
              top_k: int | None = 40, top_p: float | None = 0.95, stop_ids: set[int] | None = None,
-             rng: np.random.Generator | None = None) -> list[int]:
+             rng: np.random.Generator | None = None, repetition_penalty: float = 1.0,
+             repetition_window: int = 64) -> list[int]:
     from .transformer import sample
 
     rng = rng or np.random.default_rng()
@@ -61,7 +73,8 @@ def generate(model, prompt_ids: list[int], max_new_tokens: int = 200, temperatur
         raise ValueError("prompt vide")
     out: list[int] = []
     for _ in range(max_new_tokens):
-        next_id = sample(logits.astype(np.float64), temperature, top_k, top_p, rng)
+        scores = penalize_repetition(logits.astype(np.float64), out[-repetition_window:], repetition_penalty)
+        next_id = sample(scores, temperature, top_k, top_p, rng)
         if next_id in stop_ids:
             break
         out.append(next_id)

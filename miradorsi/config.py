@@ -65,6 +65,7 @@ class GenerationConfig:
     top_k: int = 40
     top_p: float = 0.95
     max_new_tokens: int = 160
+    repetition_penalty: float = 1.15   # > 1 : décourage les répétitions
 
 
 @dataclass
