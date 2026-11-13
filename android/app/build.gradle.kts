@@ -11,8 +11,8 @@ val abis = (findProperty("abis") as String?)?.split(",") ?: listOf("arm64-v8a", 
 android {
     namespace = "com.miradorsi.app"
     compileSdk = 35
-    // NDK du système (GitHub Actions en fournit un récent) ; sinon celui par défaut d'AGP
-    System.getenv("ANDROID_NDK_LATEST_HOME")?.let { ndkPath = it }
+    // NDK déjà installé sur la machine (GitHub Actions en fournit un récent) ; sinon celui d'AGP
+    System.getenv("ANDROID_NDK_LATEST_HOME")?.let { ndkVersion = java.io.File(it).name }
 
     defaultConfig {
         applicationId = "com.miradorsi.app"

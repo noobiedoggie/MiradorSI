@@ -55,10 +55,9 @@ Dans `mirador chat` :
 L'APK est compilé automatiquement par GitHub Actions (`.github/workflows/android.yml`) à chaque
 modification de `android/`, `miradorsi/` ou du modèle embarqué.
 
-**Pour l'installer :**
-1. Sur GitHub, ouvre l'onglet **Actions**, puis le dernier passage réussi de « APK Android ».
-2. Télécharge l'artefact **MiradorSI-apk**, qui contient `MiradorSI.apk`.
-3. Sur le téléphone, ouvre le fichier et autorise l'installation d'applications de cette source.
+**Pour l'installer :** télécharge `MiradorSI.apk` depuis la release **apk** du dépôt (elle est
+remplacée à chaque version qui passe les tests sur émulateur), ouvre-le sur le téléphone et
+autorise l'installation d'applications de cette source.
 
 **Ce que fait l'application :**
 - **Analyse sur internet** (icône loupe) : la même analyse approfondie que sur PC, qui recherche,
@@ -67,6 +66,35 @@ modification de `android/`, `miradorsi/` ou du modèle embarqué.
   **hors ligne**.
 - **Dictée vocale**, historique des conversations sur le téléphone, choix de la profondeur
   d'analyse (bouton +).
+- **Cerveau au choix** (bandeau de l'accueil) : Vigie, le modèle maison, ou l'un des trois
+  modèles ouverts ci-dessous, téléchargés à la demande et exécutés sur le téléphone.
+
+### Trois modèles ouverts pour rédiger les réponses
+
+Mirador SI garde son métier : chercher, classer, recouper et citer les sources (internet ou
+bibliothèque hors ligne). Un modèle de langage ouvert, exécuté **sur le téléphone** par
+[llama.cpp](https://github.com/ggml-org/llama.cpp) (licence MIT), rédige ensuite la réponse à
+partir des passages numérotés et cite leurs numéros [n]. Les calculs et les raisonnements (âges,
+comparaisons) restent exacts, sans passer par le modèle. Sans source, la réponse est marquée
+« à confirmer ».
+
+| | Modèle | Éditeur | Taille (Q4_K_M) | Licence | Vitesse* |
+|---|---|---|---|---|---|
+| **Rapide** | Gemma 3 1B | Google | 806 Mo | Gemma Terms of Use | ~27 mots/s |
+| **Équilibré** | Qwen3.5 2B | Alibaba | 1,3 Go | Apache 2.0 | ~15 mots/s |
+| **Puissant** | Ministral 3 3B | Mistral AI (France) | 2,1 Go | Apache 2.0 | ~9 mots/s |
+
+\* morceaux de mots par seconde, mesurés sur un processeur 4 cœurs de PC ; un téléphone récent
+est du même ordre, un ancien plus lent.
+
+Ces trois modèles ont été retenus parmi sept, après des essais en français : réponses à partir
+de passages de Wikipédia, discussion libre et questions pièges. Qwen3.5 0.8B, LFM2.5 1.2B et
+Granite 4.0 1B inventaient trop souvent (vainqueur de la Coupe du monde 2018 faux, par exemple) ;
+SmolLM3 3B était correct, mais Ministral 3 3B écrit le meilleur français. Les fichiers viennent
+de Hugging Face ; ils ne sont jamais inclus dans l'APK.
+
+Pour les essayer sur PC : `android/obtenir_llama_cpp.sh`, puis compiler
+`android/app/src/main/cpp/` avec CMake (programme `essai_moteur`).
 
 **Comment c'est fait :**
 - Interface en Kotlin et Jetpack Compose.
