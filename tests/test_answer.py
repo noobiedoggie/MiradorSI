@@ -49,7 +49,7 @@ def test_precise_answer_uses_the_fiche_of_the_subject():
     ]
     report.findings = [Finding("La commune de Lyon concentre 37 % de la population de la métropole.", 1, [], 0.9, 0.7)]
     text = compose_answer(report)
-    assert text.startswith("Population municipale (Lyon) : 519 127 hab. (2023). [2]")
+    assert text.startswith("La population de Lyon est de 519 127 habitants (2023). [2]")
     assert "Pour situer : Lyon est une commune du sud-est de la France. [2]" in text
 
 
@@ -61,6 +61,6 @@ def test_fiche_answers_the_precise_question():
                                 "Australie — Capitale : Canberra."),
     ]
     report.findings = [Finding("Darwin est la capitale du Territoire du Nord en Australie.", 1, [], 0.9, 0.7)]
-    assert compose_answer(report).startswith("Capitale (Australie) : Canberra. [2]")
+    assert compose_answer(report).startswith("La capitale de l'Australie est Canberra. [2]")
     report.question = "Qui est le Premier ministre de l'Australie ?"
-    assert compose_answer(report).startswith("Premier ministre (Australie) : Anthony Albanese. [2]")
+    assert compose_answer(report).startswith("Le Premier ministre de l'Australie est Anthony Albanese. [2]")

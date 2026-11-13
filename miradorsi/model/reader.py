@@ -58,41 +58,8 @@ def encode_example(tokenizer, example: ReaderExample, max_len: int) -> tuple[np.
 
 
 # ---------------------------------------------------------------- formes du sujet en français
-def subject_forms(title: str, lead: str) -> tuple[str, str]:
-    """(« Le Japon », « du Japon ») d'après l'introduction ; (« Lyon », « de Lyon ») sinon."""
-    base = re.sub(r"\s*\(.*\)$", "", title)
-    titled = re.match(r"^(?:(Les|Le|La) |(L'|L’))(.+)$", base)  # « Les Misérables » → « des Misérables »
-    if titled:
-        article, rest = (titled.group(1) or titled.group(2)).replace("’", "'"), titled.group(3)
-        return base, {"Le": f"du {rest}", "La": f"de la {rest}", "Les": f"des {rest}", "L'": f"de l'{rest}"}[article]
-    match = re.match(rf"^(?:(Les|Le|La) |(L'|L’)){re.escape(base)}\b", lead)
-    if match:
-        article = (match.group(1) or match.group(2)).replace("’", "'")
-        subject = f"{article.lower()}{base}" if article == "L'" else f"{article.lower()} {base}"
-        of = {"Le": f"du {base}", "La": f"de la {base}", "Les": f"des {base}", "L'": f"de l'{base}"}[article]
-        return subject, of  # « le Japon » : en milieu de phrase ; capitalisé en début de réponse
-    of = f"d'{base}" if base[:1].lower() in "aeiouyéèêàâîôûh" else f"de {base}"
-    return base, of
-
-
-def in_phrase(of: str, subject: str) -> str:
-    """« du Japon » → « au Japon », « de la France » → « en France », « de Lyon » → « à Lyon »."""
-    for prefix, preposition in (("du ", "au "), ("de la ", "en "), ("de l'", "en "), ("des ", "aux ")):
-        if of.startswith(prefix):
-            return preposition + of[len(prefix):]
-    return f"à {subject}"
-
-
-_DATE_PLACE = re.compile(r"^((?:\d{1,2}(?:er)? )?\w+ \d{3,4})\s+(.+)$")
-
-
-def _when_where(value: str) -> str:
-    """« 7 novembre 1867 Varsovie (Pologne) » → « le 7 novembre 1867 à Varsovie (Pologne) »."""
-    match = _DATE_PLACE.match(value)
-    if match and re.search(r"\d", match.group(1)):
-        return f"le {match.group(1)} à {match.group(2)}"
-    return f"le {value}" if value[:1].isdigit() else value
-
+from ..analysis.phrasing import FactPhraser, in_phrase, subject_forms  # noqa: E402,F401
+from ..analysis.phrasing import when_where as _when_where  # noqa: E402
 
 # question(s) possibles et réponse rédigée, par rubrique de fiche
 _FICHE_TEMPLATES = {
@@ -211,6 +178,7 @@ def make_examples(library, doc_id: int, rng: random.Random, distractor_ids: list
         fields = {"S": subject, "of": of, "v": value, "wv": _when_where(value), "born": born, "died": died,
                   "in_": in_}
         question = rng.choice(questions).format(**fields)
+        question = question[:1].upper() + question[1:]
         others = [f for f, lab, _ in fiche if lab != label]
         own = rng.sample(others, min(2, len(others))) + [line]
         rng.shuffle(own)
@@ -225,10 +193,24 @@ def make_examples(library, doc_id: int, rng: random.Random, distractor_ids: list
                                   absent_ratio))
     person = bool(re.search(r"\bnée?\b", lead[:200]))
     question = rng.choice(_PERSON_QUESTIONS if person else _DEFINITION_QUESTIONS).format(S=subject, of=of)
+    question = question[:1].upper() + question[1:]  # « Le Japon ? »
     target = (title, _passage(title, lead, []))
     answer = _first_sentences(target[1], _SOURCE_CHARS)  # rien qui ne soit dans la source
+    # résumé rédigé : la définition, puis des faits de la fiche transformés en phrases
+    # (« … Sa capitale est Tokyo. Sa population est de 123 340 000 habitants. ») : le lecteur
+    # apprend à écrire un vrai petit paragraphe à partir de ses sources
+    phraser = FactPhraser(title, lead)
+    head = _first_sentences(lead, 200)
+    facts = phraser.summary({label: value for _, label, value in fiche}, already=head)
+    if facts and rng.random() < 0.6:
+        lines = [line for line, label, value in fiche if phraser.sentence(label, value, summary=True) in facts]
+        target = (title, " ".join([head] + lines))
+        answer = " ".join([head] + facts)
+        kind = "resume"
+    else:
+        kind = "definition"
     traps = [(o_title, _passage(o_title, o_lead, [])) for o_title, o_lead, _ in distractors]
-    examples.append(_assemble(question, target, traps, answer, "definition", rng, absent_ratio))
+    examples.append(_assemble(question, target, traps, answer, kind, rng, absent_ratio))
     return examples
 
 

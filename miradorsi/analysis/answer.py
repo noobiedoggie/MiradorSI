@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 
 from .researcher import DATE_RE, WHEN_RE, AnalysisReport, Finding, Source, is_off_topic_work
+from .phrasing import FactPhraser, fiche_of
 from .text import content_terms, normalize, split_sentences, strip_idioms
 
 _DEFINITION = re.compile(
@@ -165,11 +166,28 @@ def _direct_answer(report: AnalysisReport, subject: Source | None) -> tuple[str,
     return None
 
 
+_HAS_VERB = re.compile(r"\b(?:est|sont|était|étaient|a|ont|avait|avaient|fut|furent|sera|seront|devient|devint|"
+                       r"reste|compte|comptait|comprend|désigne|possède|représente|constitue|se trouve|situé|située|"
+                       r"permet|joue|vit|meurt|naît|regroupe|occupe|forme|signifie|devenu|devenue|parle|parlé|parlée|"
+                       r"\w+(?:ait|aient|aît|ît|ut|urent|èrent|irent|era|eront|issent)|"   # imparfait, passé simple, futur
+                       r"(?:a|ont|avait|fut) \w+(?:é|ée|és|ées|i|is|u|us|it|ert))\b", re.I)
+
+
+def _phrase(line: str, source: Source | None) -> str:
+    """Ligne de fiche → phrase (« Japon — Capitale : Tokyo. » → « La capitale du Japon est Tokyo. »)."""
+    if source and line.startswith(f"{source.title} — ") and " : " in line:
+        label, value = line[len(source.title) + 3:].split(" : ", 1)
+        sentence = FactPhraser(source.title, source.text).sentence(re.sub(r"\s*\(\d{4}\)$", "", label), value)
+        if sentence:
+            return sentence
+    return _clean(line)
+
+
 def _cite(ids: list[int]) -> str:
     return "".join(f"[{i}]" for i in ids)
 
 
-def compose_answer(report: AnalysisReport, max_points: int = 4, offline: bool = False) -> str:
+def compose_answer(report: AnalysisReport, max_points: int = 3, offline: bool = False) -> str:
     """Réponse rédigée : idée principale, points clés, chiffres recoupés, réserves."""
     if not report.findings:
         return ""
@@ -192,7 +210,12 @@ def compose_answer(report: AnalysisReport, max_points: int = 4, offline: bool = 
         source = report.source(opening[0].source_id) or source
     lead = lead_sentences(source) if source else []
     if kind == "definition" and lead:
-        paragraphs.append(" ".join(lead) + f" {_cite([source.id])}")
+        # un petit paragraphe : la définition, puis deux faits clés de la fiche rédigés en phrases
+        # (« Sa capitale est Tokyo. Sa population est de 123 340 000 habitants. »)
+        lead = lead[:2]
+        facts = FactPhraser(source.title, source.text).summary(fiche_of(source.title, source.text),
+                                                               already=" ".join(lead))
+        paragraphs.append(" ".join(lead + facts) + f" {_cite([source.id])}")
         used += lead
     else:
         direct = _direct_answer(report, main_source(report))
@@ -203,7 +226,7 @@ def compose_answer(report: AnalysisReport, max_points: int = 4, offline: bool = 
             lead = lead_sentences(source)
             # la fiche répond : on ne la complète que par une phrase du même article
             top = [f for f in top[:1] if f.source_id == sid and not _similar(f.text, sentence)]
-            paragraphs.append(" ".join([f"{_clean(sentence)} {_cite([sid])}"] +
+            paragraphs.append(" ".join([f"{_phrase(sentence, source)} {_cite([sid])}"] +
                                        [f"{_clean(f.text)} {_cite(f.citations)}" for f in top]))
             used.append(sentence)
         else:
@@ -214,15 +237,31 @@ def compose_answer(report: AnalysisReport, max_points: int = 4, offline: bool = 
             used.append(lead[0])
 
     points = []
-    floor = 0.5 * max(f.relevance for f in ranked)
+    best = max(f.relevance for f in ranked)
+    subject = main_source(report)
     for finding in ranked:
         if len(points) == max_points:
             break
-        if finding.relevance < floor:
-            continue  # trop loin de la question
+        # hors de l'article sujet, seulement ce qui est presque aussi pertinent (pas de « spitz
+        # japonais » ni de parti politique quand on demande le japonais)
+        src = report.source(finding.source_id)
+        core = set(content_terms(re.sub(r"\s*\(.*\)", "", src.title))) if src else set()
+        about = src is not None and (src is subject or (core and core <= asked))
+        if finding.relevance < (0.5 if about else 0.8) * best:
+            continue
+        if not about and re.match(r"(?:Son|Sa|Ses|Il|Elle|Ils|Elles|Cette|Ce|Cet|Ces|Celui|Celle)\b", finding.text):
+            continue  # « Son ambition… » tiré d'un autre article : on ne sait pas de qui il parle
         if any(_similar(finding.text, u) for u in used):
             continue
-        points.append(f"• {_clean(finding.text, 260)} {_cite(finding.citations)}")
+        if src and finding.text.startswith(f"{src.title} — "):
+            text = _phrase(finding.text, src)
+            if text == _clean(finding.text):
+                continue  # rubrique de fiche qu'on ne sait pas rédiger : pas de données brutes
+        elif not _HAS_VERB.search(finding.text):
+            continue  # légende d'image, liste de noms : pas une phrase
+        else:
+            text = _clean(finding.text, 260)
+        points.append(f"• {text} {_cite(finding.citations)}")
         used.append(finding.text)
     if points:
         paragraphs.append("## Points clés\n" + "\n".join(points))

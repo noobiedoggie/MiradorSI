@@ -58,7 +58,7 @@ def test_agent_answers_offline_from_the_library(tmp_path):
     assert text.startswith("En astrophysique, un trou noir est un objet céleste")
     assert text.endswith("de la bibliothèque hors ligne (Wikipédia).") and report.sources
     text, _ = agent.offline_reply("Quelle est la population de Lyon ?")
-    assert text.startswith("Population municipale (Lyon) : 519 127 hab. (2023).")
+    assert text.startswith("La population de Lyon est de 519 127 habitants (2023).")
     assert agent.offline_reply("Qui a inventé le zorglub ?")[0] == NOT_IN_LIBRARY
 
 
