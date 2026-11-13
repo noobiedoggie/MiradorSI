@@ -21,6 +21,9 @@ _TAIL_SECTIONS = re.compile(r"\n(Notes et références|Références|Voir aussi|B
                             r"Articles connexes|Annexes|Sources)\n", re.I)
 
 
+_LOW_VALUE_TITLE = re.compile(r"\(homonymie\)|^Liste (des|de)\b", re.I)
+
+
 def clean_article(text: str, max_chars: int) -> str:
     """Retire les sections de références et tronque proprement à la fin d'un paragraphe."""
     match = _TAIL_SECTIONS.search(text)
@@ -44,6 +47,8 @@ def build_web_corpus(topics: list[str], wiki: WikipediaSearch, fetcher: Fetcher,
             log(f"  ✗ recherche « {topic} » : {exc}")
             continue
         for result in results[:per_topic]:
+            if _LOW_VALUE_TITLE.search(result.title):
+                continue  # pages d'homonymie et listes : des liens, pas de la langue
             path = out_dir / f"{slugify(result.title)}.txt"
             if path.exists():
                 continue  # déjà collecté (relance possible sans tout retélécharger)

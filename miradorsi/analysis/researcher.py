@@ -351,9 +351,11 @@ class DeepAnalyzer:
 
         overlap = np.array([0.6 * coverage(set(terms)) + 0.4 * coverage(set(terms) | title_terms[sid])
                             for sid, _, terms, _ in candidates])
-        relevance = (0.40 * _normalized(sentence_bm25.scores(list(weights), weights))
-                     + 0.20 * _normalized(np.array([c[3] for c in candidates]))
-                     + 0.40 * overlap)
+        # La couverture des mots (pondérés) de la question est le signal le plus fiable ;
+        # BM25 départage, sans laisser une phrase longue gagner par simple répétition.
+        relevance = (0.30 * _normalized(sentence_bm25.scores(list(weights), weights))
+                     + 0.15 * _normalized(np.array([c[3] for c in candidates]))
+                     + 0.55 * overlap)
         # Bonus : phrase d'introduction (les chapeaux résument), chiffre pour une question chiffrée
         quantitative = bool(QUANTITATIVE_RE.search(question))
         for i, (sid, sentence, terms, _) in enumerate(candidates):
@@ -366,7 +368,7 @@ class DeepAnalyzer:
             # l'Allemagne, même très proche par ailleurs, répond à une autre question.
             if entities and not entities & (set(terms) | title_terms[sid]):
                 bonus *= 0.55
-            relevance[i] = min(1.0, relevance[i] * bonus)
+            relevance[i] = relevance[i] * bonus  # pas de plafond : il créerait des ex æquo
 
         # --- recoupement : la même idée (avec les mêmes chiffres) dans d'autres sources ?
         index = TfidfIndex([p.terms for p in passages] + [c[2] for c in candidates])
@@ -423,10 +425,11 @@ class DeepAnalyzer:
                 continue
             per_source[source_id] = per_source.get(source_id, 0) + 1
             chosen.append(i)
-            report.findings.append(Finding(sentence, source_id, support[i], round(float(relevance[i]), 3), 0.0))
+            report.findings.append(Finding(sentence, source_id, support[i],
+                                           round(float(min(1.0, relevance[i])), 3), 0.0))
         for finding, i in zip(report.findings, chosen):
             cred = source_by_id[finding.source_id].credibility.score
-            confidence = 0.5 * cred + 0.15 * min(len(finding.supporting), 2) + 0.2 * relevance[i]
+            confidence = 0.5 * cred + 0.15 * min(len(finding.supporting), 2) + 0.2 * min(1.0, relevance[i])
             finding.confidence = round(float(min(0.99, confidence)), 3)
 
         # --- chiffres clés

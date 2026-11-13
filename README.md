@@ -24,7 +24,8 @@ pip install -e .            # installe la commande `mirador`
 # (ou, sans installation : python -m miradorsi <commande>)
 
 mirador info                # identité et état du modèle
-mirador train --int8        # entraîne le réseau (~12 min sur un CPU 4 cœurs) + version compressée
+mirador corpus-web --topics-file data/sujets_fr.txt   # ~150 articles Wikipédia (~25 min)
+mirador train --int8        # entraîne le réseau (~35 min sur un CPU 4 cœurs) + version compressée
 mirador chat                # conversation interactive
 mirador bench               # compare les architectures sur TON PC (~15 min)
 mirador quantize            # compresse un modèle entraîné en int8 (~4× plus petit)
@@ -32,8 +33,7 @@ mirador quantize            # compresse un modèle entraîné en int8 (~4× plus
 mirador analyze "Quel est l'impact de l'IA sur l'emploi en France ?" -d 3
 mirador search "énergie solaire France 2025"
 mirador read https://fr.wikipedia.org/wiki/Mirador
-mirador corpus-web --topics-file data/sujets_fr.txt   # ~160 articles Wikipédia (≈ 4 Mo de français)
-mirador corpus-web "intelligence artificielle" "esprit critique"   # ou tes propres sujets
+mirador corpus-web "intelligence artificielle" "esprit critique"   # ajoute tes propres sujets
 ```
 
 Dans `mirador chat` :
@@ -130,6 +130,31 @@ Garanties vérifiées par les tests :
 Le Transformer de la v0.1 reste disponible : `arch = "transformer"` dans `config/mirador.toml`
 ou `mirador train --arch transformer`.
 
+### Entraîné sur un vrai corpus
+
+`mirador corpus-web --topics-file data/sujets_fr.txt` collecte des articles de Wikipédia en
+français sur 81 sujets de culture générale. Résultats obtenus avec Vigie (2,5 M de paramètres,
+1 500 étapes, ~35 min sur CPU) :
+
+| | Avant (corpus local) | Après (corpus Wikipédia) |
+|---|---|---|
+| Texte d'entraînement | 7 000 tokens | **1,6 M tokens** (153 articles, 6,1 M caractères) |
+| Perte sur 13 articles **jamais vus** | 10,9 (pire que le hasard : 6,9) | **3,88** (hasard : 8,32) |
+| Perplexité · bits par caractère | — | 48 · 1,66 |
+| Réponses sur son identité | correctes | correctes (les dialogues gardent 3 séquences sur 16 par lot) |
+| Fichier int8 | 2,0 Mo | 2,4 Mo, **même score** que la version complète |
+
+Le modèle a donc vraiment appris le français au lieu de réciter. Son texte libre a des mots, des
+tournures et une mise en page de type encyclopédie, mais **pas encore de sens suivi** : à cette
+taille, c'est normal. La perte baissait encore en fin d'entraînement, donc plus d'étapes et plus
+d'articles l'amélioreront.
+
+Notes :
+- Les articles collectés restent sur ta machine (`data/corpus/web/`, ignoré par git). Le texte de
+  Wikipédia est sous licence CC BY-SA.
+- `data/lexique_fr.json` ne contient que la rareté de chaque mot (aucune phrase). Il sert à
+  l'analyse et se recalcule avec `mirador lexique`.
+
 ### Banc d'essai
 
 Les architectures sont comparées sur les mêmes données, avec les mêmes réglages :
@@ -215,12 +240,12 @@ Garde-fous :
 
 ## Limites actuelles, en toute franchise
 
-- **Le réseau de neurones est petit et n'a vu que peu de texte (~7 000 tokens).** Sur un texte
-  qu'il n'a jamais vu, il fait aujourd'hui moins bien que le hasard : il a *mémorisé* son corpus.
-  `mirador train` l'affiche désormais clairement. Il connaît son identité et
-  le style de ses dialogues, mais il ne « raisonne » pas comme un grand modèle. Une meilleure
-  architecture améliore ce qu'il apprend de chaque token, mais **c'est la quantité de texte qui
-  le rendra savant** : ajoute des documents avec `mirador corpus-web` ou dans `data/corpus/`.
+- **Le réseau de neurones reste petit (2,5 M de paramètres) et a lu 1,6 M de tokens.** Il connaît
+  son identité et écrit un français plausible mot à mot, mais il ne « raisonne » pas et ne sait
+  pas répondre à une question de culture générale. Un grand modèle a des milliards de paramètres
+  et lit des milliers de milliards de tokens. Pour progresser : plus d'articles
+  (`mirador corpus-web`), plus d'étapes, un modèle plus large. Si le corpus est trop petit et que
+  le modèle se met à mémoriser, `mirador train` le signale.
 - Le banc d'essai porte sur de petits modèles (~1–2 M de paramètres) et de la prose technique en
   anglais. Les écarts sont nets, mais ils restent à confirmer à plus grande échelle.
 - **Les analyses ne dépendent pas du réseau de neurones.** Elles utilisent des algorithmes de

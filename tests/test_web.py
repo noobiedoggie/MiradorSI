@@ -116,7 +116,10 @@ def test_client_honors_retry_after(server, tmp_path):
     client = WebClient(WebConfig(min_delay_seconds=0, cache_dir="", retries=2, respect_robots_txt=False))
     assert client.get(server + "/limite").text == "ok enfin"      # attend puis réessaie
     host = server.split("//")[1]
-    assert client._delay_for(host) >= 2.0                         # et ralentit pour ce site
+    slowed = client._delay_for(host)
+    assert slowed >= 1.6                                          # et ralentit pour ce site
+    client.get(server + "/limite?encore", use_cache=False)        # nouveau succès…
+    assert client._delay_for(host) < slowed                       # … le délai redescend
     fresh = WebClient(WebConfig(min_delay_seconds=0, cache_dir="", retries=2, respect_robots_txt=False))
     start = time.monotonic()
     with pytest.raises(WebError, match="429"):

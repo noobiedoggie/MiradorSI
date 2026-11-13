@@ -154,3 +154,22 @@ def test_training_pipeline_end_to_end(tmp_path, arch):
     brain = Brain.load(tmp_path / "ckpt")
     assert getattr(brain.model, "arch") == arch
     assert isinstance(brain.reply("Qui es-tu ?"), str)
+
+
+def test_training_mixes_identity_dialogues_into_large_corpus(tmp_path):
+    from miradorsi.config import load_config
+    from miradorsi.model.train import train
+
+    cfg = load_config()
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    for i in range(6):  # gros corpus : les dialogues y seraient noyés sans mélange
+        (corpus / f"doc{i}.txt").write_text(f"Texte encyclopédique numéro {i} sur la science. " * 600,
+                                            encoding="utf-8")
+    cfg.paths.corpus, cfg.paths.checkpoints = str(corpus), str(tmp_path / "ckpt")
+    cfg.model.vocab_size, cfg.model.context_length, cfg.model.d_model, cfg.model.d_embed = 300, 32, 32, 16
+    cfg.training.batch_size, cfg.training.eval_every, cfg.training.identity_repeats = 5, 2, 1
+    logs = []
+    train(cfg, steps=4, fresh=True, log=logs.append)
+    assert any(line.startswith("Mélange : 1/5") for line in logs)
+    assert any("★ meilleur" in line for line in logs)

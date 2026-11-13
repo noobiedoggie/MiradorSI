@@ -116,6 +116,12 @@ class WebClient:
             try:
                 self._wait_politely(url)
                 response = self._request(url, headers or {})
+                if host in self._host_delay:  # tout va bien : on réaccélère progressivement
+                    relaxed = self._host_delay[host] * 0.8
+                    if relaxed <= self.cfg.min_delay_seconds:
+                        del self._host_delay[host]
+                    else:
+                        self._host_delay[host] = relaxed
                 if use_cache and response.status == 200:
                     self._cache_write(url, response)
                 return response
