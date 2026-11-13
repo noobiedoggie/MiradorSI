@@ -12,7 +12,7 @@ android {
     namespace = "com.miradorsi.app"
     compileSdk = 35
     // NDK déjà installé sur la machine (GitHub Actions en fournit un récent) ; sinon celui d'AGP
-    System.getenv("ANDROID_NDK_LATEST_HOME")?.let { ndkVersion = java.io.File(it).name }
+    System.getenv("ANDROID_NDK_LATEST_HOME")?.let { ndkVersion = it.trimEnd('/').substringAfterLast('/') }
 
     defaultConfig {
         applicationId = "com.miradorsi.app"
