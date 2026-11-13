@@ -182,3 +182,41 @@ def test_repetition_penalty_discourages_recent_tokens():
     out = penalize_repetition(logits, [0, 2, 0], 2.0)
     assert out[0] == 1.0 and out[2] == -2.0 and out[1] == 1.0     # positifs divisés, négatifs multipliés
     assert np.array_equal(penalize_repetition(logits, [0], 1.0), logits)
+
+
+def test_interrupted_training_resumes_where_it_stopped(tmp_path, monkeypatch):
+    import miradorsi.model.train as T
+    from miradorsi.config import load_config
+    from miradorsi.core.optim import cosine_lr
+
+    cfg = load_config()
+    (tmp_path / "corpus").mkdir()
+    (tmp_path / "corpus" / "a.txt").write_text("Mirador observe et vérifie les sources. " * 60, encoding="utf-8")
+    cfg.paths.corpus, cfg.paths.checkpoints = str(tmp_path / "corpus"), str(tmp_path / "ckpt")
+    cfg.model.vocab_size, cfg.model.context_length, cfg.model.d_model, cfg.model.d_embed = 300, 32, 32, 16
+    cfg.training.batch_size, cfg.training.identity_repeats = 2, 1
+    cfg.training.eval_every, cfg.training.checkpoint_every, cfg.training.warmup_steps = 100, 2, 2
+
+    class Coupure(Exception):
+        pass
+
+    real_get_batch, calls = T.get_batch, {"n": 0}
+
+    def get_batch_then_crash(*args):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise Coupure  # panne simulée pendant l'étape 3 (dernier point de reprise : étape 2)
+        return real_get_batch(*args)
+
+    monkeypatch.setattr(T, "get_batch", get_batch_then_crash)
+    with pytest.raises(Coupure):
+        T.train(cfg, steps=6, fresh=True, log=lambda line: None)
+    monkeypatch.setattr(T, "get_batch", real_get_batch)
+
+    logs: list[str] = []
+    T.train(cfg, steps=999, log=logs.append)              # `steps` ignoré : on reprend le plan initial
+    assert any("Reprise d'un entraînement interrompu : étape 2/6" in l for l in logs)
+    step3 = next(l for l in logs if l.startswith("étape     3/6"))
+    expected = cosine_lr(2, 6, cfg.training.learning_rate, 2, cfg.training.min_lr_ratio)
+    assert f"lr {expected:.2e}" in step3                  # le planning continue, il ne redémarre pas
+    assert (tmp_path / "ckpt" / "reprise-optim.npz").exists()

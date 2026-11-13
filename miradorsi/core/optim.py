@@ -45,6 +45,23 @@ class AdamW:
         for p in self.params:
             p.grad = None
 
+    def state_dict(self) -> dict[str, np.ndarray]:
+        """Moments d'Adam et compteur d'étapes (pour reprendre un entraînement interrompu)."""
+        state = {"step_count": np.array(self.step_count)}
+        for i, (m, v) in enumerate(zip(self.m, self.v)):
+            state[f"m{i}"], state[f"v{i}"] = m, v
+        return state
+
+    def load_state_dict(self, state) -> None:
+        if len([k for k in state.keys() if k.startswith("m")]) != len(self.params):
+            raise ValueError("état d'optimiseur incompatible avec ce modèle")
+        self.step_count = int(state["step_count"])
+        for i, p in enumerate(self.params):
+            m, v = np.asarray(state[f"m{i}"]), np.asarray(state[f"v{i}"])
+            if m.shape != p.data.shape:
+                raise ValueError("état d'optimiseur incompatible avec ce modèle")
+            self.m[i], self.v[i] = m.astype(p.data.dtype), v.astype(p.data.dtype)
+
 
 def clip_grad_norm(params: list[Parameter], max_norm: float) -> float:
     """Limite la norme globale du gradient ; renvoie la norme avant découpage."""

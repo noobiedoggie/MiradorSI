@@ -150,3 +150,15 @@ def extract_html(raw_html: str, url: str = "") -> Document:
 def strip_tags(fragment: str) -> str:
     """Retire les balises d'un petit fragment HTML (extraits de résultats de recherche)."""
     return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", fragment)).split())
+
+
+# Sections de fin d'article (Wikipédia et autres) : listes de références, pas du contenu.
+_TAIL_SECTIONS = re.compile(r"\n(Notes et références|Références|Notes|Voir aussi|Bibliographie|Liens externes|"
+                            r"Articles connexes|Annexes|Sources|References|See also|Further reading|"
+                            r"External links)\n", re.I)
+
+
+def strip_reference_sections(text: str) -> str:
+    """Coupe le texte au début des sections de références (si elles arrivent après le contenu)."""
+    match = _TAIL_SECTIONS.search(text)
+    return text[: match.start()].rstrip() if match and match.start() > len(text) * 0.3 else text

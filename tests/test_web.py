@@ -168,3 +168,18 @@ def test_bulk_wikipedia_follows_redirects(tmp_path):
     files = build_wikipedia_bulk(["Astre du jour", "Inexistant"], Client(), tmp_path, log=lambda m: None)
     assert [f.name for f in files] == ["soleil.txt"] and Client.calls == 1   # une seule requête
     assert files[0].read_text(encoding="utf-8").startswith("Soleil\n\nLe Soleil est l'étoile du Système solaire.")
+
+
+def test_wikipedia_search_survives_one_language_failing():
+    from miradorsi.web.http import HttpResponse
+    from miradorsi.web.search import WikipediaSearch
+
+    class Client:
+        def get(self, url, **kw):
+            if url.startswith("https://en."):
+                raise WebError("HTTP 403 sur en.wikipedia.org")
+            data = {"query": {"search": [{"title": "Tour Eiffel", "snippet": "324 <b>mètres</b>"}]}}
+            return HttpResponse(url, 200, {}, __import__("json").dumps(data).encode())
+
+    results = WikipediaSearch(Client(), ["fr", "en"]).search("tour Eiffel", 4, "fr")
+    assert [r.title for r in results] == ["Tour Eiffel"] and results[0].snippet == "324 mètres"

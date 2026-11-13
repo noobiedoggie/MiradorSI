@@ -1,0 +1,83 @@
+# ============================================================================
+#  Mirador SI — préréglage « rapide » (Vigie 4,3 M, ~1 h 30 sur un CPU 4 cœurs)
+#  Usage : mirador --config config/mirador-rapide.toml train
+#  Les chemins relatifs partent de la racine du projet.
+# ============================================================================
+
+[paths]
+identity = "config/identity.toml"
+corpus = "data/corpus"
+checkpoints = "checkpoints"
+cache = ".cache/web"
+reports = "reports"
+lexicon = "data/lexique_fr.json"   # rareté des mots (construit par `mirador corpus-web`)
+
+# --- Le réseau de neurones (écrit de zéro) -----------------------------------
+[model]
+arch = "vigie"           # "vigie" : architecture compacte v0.2 · "transformer" : v0.1
+vocab_size = 4096        # taille du vocabulaire BPE (tokens spéciaux compris)
+context_length = 256     # longueur des séquences d'entraînement
+d_model = 384            # largeur des représentations
+n_heads = 4              # têtes d'attention
+seed = 1337
+
+# Vigie uniquement
+d_embed = 192            # embeddings factorisés (0 = pas de factorisation)
+pattern = "RA"           # blocs uniques : R = récurrent, A = attention locale
+n_loops = 2              # chaque bloc est réutilisé n_loops fois (profondeur recyclée)
+n_kv_heads = 1           # attention multi-requêtes : une seule paire clé/valeur
+window = 128             # portée de l'attention locale (la récurrence voit plus loin)
+
+# Transformer uniquement
+n_layers = 4
+mlp_ratio = 4
+
+[training]
+steps = 4000
+batch_size = 16
+learning_rate = 1.5e-3
+min_lr_ratio = 0.1
+warmup_steps = 200
+weight_decay = 0.1
+grad_clip = 1.0
+eval_every = 400
+eval_batches = 8
+identity_repeats = 8     # combien de fois répéter les dialogues d'identité
+dialogue_ratio = 0.2     # part minimale des dialogues d'identité dans chaque lot
+tokenizer_sample_chars = 1_500_000
+keep_best = true         # garde le modèle qui fait le mieux sur du texte inédit
+
+[generation]
+temperature = 0.7
+top_k = 40
+top_p = 0.95
+max_new_tokens = 160
+repetition_penalty = 1.15   # > 1 décourage les répétitions (1 = désactivé)
+
+# --- Accès à internet --------------------------------------------------------
+[web]
+# Wikipédia et beaucoup de sites demandent une signature descriptive avec un moyen de contact,
+# par exemple : "MiradorSI/0.2 (https://ton-site.example; toi@example.org) Python-urllib"
+user_agent = "MiradorSI/0.2 (agent de recherche open source) Python-urllib"
+timeout_seconds = 15
+max_bytes = 3_000_000
+retries = 3
+max_retry_wait_seconds = 60   # si un site demande d'attendre plus longtemps, on abandonne
+min_delay_seconds = 1.0  # politesse : délai minimal entre deux requêtes au même site
+respect_robots_txt = true
+cache_ttl_hours = 24
+# Moteurs : "duckduckgo", "wikipedia", "searxng" (nécessite searxng_url)
+search_providers = ["duckduckgo", "wikipedia"]
+searxng_url = ""
+wikipedia_languages = ["fr", "en"]
+
+# --- Analyse approfondie -----------------------------------------------------
+[analysis]
+default_depth = 2        # 1 = rapide, 2 = standard, 3 = approfondie
+results_per_query = 8
+max_sources = { 1 = 6, 2 = 12, 3 = 20 }
+max_per_domain = 2
+min_document_chars = 400
+passage_words = 90
+findings = { 1 = 5, 2 = 8, 3 = 12 }
+corroboration_threshold = 0.32

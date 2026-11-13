@@ -9,7 +9,7 @@ from html.parser import HTMLParser
 from typing import Protocol
 
 from ..config import WebConfig
-from .extract import Document, domain_of, extract_html, strip_tags
+from .extract import Document, domain_of, extract_html, strip_reference_sections, strip_tags
 from .http import WebClient, WebError
 
 TRACKING_PARAMS = re.compile(r"^(utm_|fbclid|gclid|mc_|ref$|ref_src)")
@@ -134,16 +134,24 @@ class WikipediaSearch:
         langs = [lang] + [l for l in self.languages if l != lang] if lang in self.languages else self.languages
         results: list[SearchResult] = []
         per_lang = max(2, max_results // max(1, len(langs)))
+        failures: list[str] = []
         for code in langs:
-            resp = self.client.get(f"https://{code}.wikipedia.org/w/api.php", check_robots=False, params={
-                "action": "query", "list": "search", "srsearch": query, "srlimit": per_lang,
-                "format": "json", "utf8": 1,
-            })
-            for item in resp.json().get("query", {}).get("search", []):
+            try:  # une langue en panne ne doit pas faire perdre les résultats des autres
+                resp = self.client.get(f"https://{code}.wikipedia.org/w/api.php", check_robots=False, params={
+                    "action": "query", "list": "search", "srsearch": query, "srlimit": per_lang,
+                    "format": "json", "utf8": 1,
+                })
+                items = resp.json().get("query", {}).get("search", [])
+            except (WebError, ValueError) as exc:
+                failures.append(f"{code} : {exc}")
+                continue
+            for item in items:
                 title = item["title"]
                 url = f"https://{code}.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
                 results.append(SearchResult(title, url, strip_tags(item.get("snippet", "")),
                                             "wikipedia", len(results) + 1))
+        if failures and len(failures) == len(langs):
+            raise WebError("; ".join(failures))
         return results[:max_results]
 
 
@@ -236,6 +244,6 @@ class Fetcher:
         page = next(iter(pages.values()), {})
         if "missing" in page or not page.get("extract"):
             raise WebError(f"Article Wikipédia introuvable : {title}")
-        text = re.sub(r"\n=+ (.+?) =+\n", r"\n\1\n", page["extract"])
+        text = strip_reference_sections(re.sub(r"\n=+ (.+?) =+\n", r"\n\1\n", page["extract"]))
         return Document(url=page.get("fullurl", url), title=page.get("title", title), text=text,
                         language=lang, published=page.get("touched", ""))

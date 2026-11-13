@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..analysis.text import strip_accents
+from ..web.extract import strip_reference_sections
 from ..web.http import WebClient, WebError
 from ..web.search import Fetcher, WikipediaSearch
 
@@ -17,19 +18,12 @@ def slugify(text: str) -> str:
     return slug[:60] or "document"
 
 
-# Sections de fin d'article Wikipédia : listes de liens et de références, pas de la langue.
-_TAIL_SECTIONS = re.compile(r"\n(Notes et références|Références|Voir aussi|Bibliographie|Liens externes|"
-                            r"Articles connexes|Annexes|Sources)\n", re.I)
-
-
 _LOW_VALUE_TITLE = re.compile(r"\(homonymie\)|^Liste (des|de)\b", re.I)
 
 
 def clean_article(text: str, max_chars: int) -> str:
     """Retire les sections de références et tronque proprement à la fin d'un paragraphe."""
-    match = _TAIL_SECTIONS.search(text)
-    if match:
-        text = text[: match.start()]
+    text = strip_reference_sections(text)
     if len(text) > max_chars:
         cut = text.rfind("\n", 0, max_chars)
         text = text[: cut if cut > max_chars // 2 else max_chars]
@@ -164,13 +158,21 @@ def wikitext_to_text(wikitext: str) -> str:
 
 def fetch_wikipedia_bulk(client: WebClient, titles: list[str], lang: str = "fr",
                          batch: int = 10) -> dict[str, tuple[str, str]]:
-    """Récupère plusieurs articles par requête : {titre demandé: (titre réel, wikitexte)}.
+    """Récupère plusieurs articles par requête : {titre demandé: (titre réel, wikitexte)}."""
+    out: dict[str, tuple[str, str]] = {}
+    for pages in iter_wikipedia_bulk(client, titles, lang, batch):
+        out.update(pages)
+    return out
+
+
+def iter_wikipedia_bulk(client: WebClient, titles: list[str], lang: str = "fr", batch: int = 10):
+    """Comme fetch_wikipedia_bulk, mais rend chaque lot dès qu'il arrive.
 
     Une requête pour `batch` articles au lieu d'une par article : plus rapide et plus
     respectueux des serveurs de Wikipédia.
     """
-    out: dict[str, tuple[str, str]] = {}
     for start in range(0, len(titles), batch):
+        out: dict[str, tuple[str, str]] = {}
         chunk = titles[start:start + batch]
         resp = client.get(f"https://{lang}.wikipedia.org/w/api.php", check_robots=False, max_bytes=40_000_000,
                           params={"action": "query", "prop": "revisions", "rvprop": "content",
@@ -188,7 +190,7 @@ def fetch_wikipedia_bulk(client: WebClient, titles: list[str], lang: str = "fr",
             page = pages.get(final)
             if page and page.get("revisions"):
                 out[asked] = (page["title"], page["revisions"][0]["slots"]["main"]["content"])
-    return out
+        yield out
 
 
 def build_wikipedia_bulk(titles: list[str], client: WebClient, out_dir: Path, lang: str = "fr",
@@ -197,16 +199,23 @@ def build_wikipedia_bulk(titles: list[str], client: WebClient, out_dir: Path, la
     out_dir.mkdir(parents=True, exist_ok=True)
     todo = [t for t in titles if not (out_dir / f"{slugify(t)}.txt").exists()]
     written: list[Path] = []
+    pages: dict[str, tuple[str, str]] = {}
     try:
-        pages = fetch_wikipedia_bulk(client, todo, lang)
+        for lot in iter_wikipedia_bulk(client, todo, lang):  # chaque lot est écrit dès réception
+            pages.update(lot)
+            written += _write_bulk(lot, out_dir, max_chars_per_doc, log)
     except (WebError, ValueError, KeyError) as exc:
-        log(f"  ✗ collecte groupée : {exc}")
-        return written
-    for asked in todo:
-        if asked not in pages:
-            log(f"  ✗ introuvable : {asked}")
-            continue
-        title, wikitext = pages[asked]
+        log(f"  ✗ collecte groupée interrompue : {exc} (relancer reprend où elle s'est arrêtée)")
+    missing = [t for t in todo if t not in pages]
+    if missing and len(missing) < len(todo):
+        log(f"  ✗ introuvables : {', '.join(missing[:10])}" + (" …" if len(missing) > 10 else ""))
+    return written
+
+
+def _write_bulk(pages: dict[str, tuple[str, str]], out_dir: Path, max_chars_per_doc: int,
+                log: Callable[[str], None]) -> list[Path]:
+    written: list[Path] = []
+    for asked, (title, wikitext) in pages.items():
         if _LOW_VALUE_TITLE.search(title) or wikitext.lstrip().upper().startswith("#REDIRECT"):
             continue
         text = clean_article(wikitext_to_text(wikitext), max_chars_per_doc)
@@ -219,3 +228,19 @@ def build_wikipedia_bulk(titles: list[str], client: WebClient, out_dir: Path, la
         written.append(path)
         log(f"  ✓ {title} ({len(text):,} caractères)".replace(",", "\u202f"))
     return written
+
+
+def wikipedia_links(client: WebClient, page: str, lang: str = "fr") -> list[str]:
+    """Titres des articles (espace principal) liés depuis une page, ex. une liste d'articles vitaux."""
+    titles: list[str] = []
+    params = {"action": "query", "prop": "links", "titles": page, "plnamespace": 0, "pllimit": "max",
+              "format": "json", "formatversion": 2, "redirects": 1}
+    while True:
+        data = client.get(f"https://{lang}.wikipedia.org/w/api.php", params=params, check_robots=False,
+                          use_cache=False).json()
+        for p in data.get("query", {}).get("pages", []):
+            titles.extend(link["title"] for link in p.get("links", []))
+        if "continue" not in data:
+            break
+        params = {**params, **data["continue"]}
+    return list(dict.fromkeys(titles))

@@ -13,3 +13,12 @@ checkpoints/
 reports/
 data/corpus/web/
 checkpoints-500m/
+
+# Android : fichiers générés à la compilation
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/python/miradorsi/
+android/app/src/main/python/mirador_app/data/lexique_fr.json
+android/app/src/main/python/mirador_app/config/identity.toml

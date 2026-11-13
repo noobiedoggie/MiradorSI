@@ -57,6 +57,7 @@ class TrainingConfig:
     dialogue_ratio: float = 0.2          # part minimale des dialogues d'identité dans chaque lot
     tokenizer_sample_chars: int = 1_500_000
     keep_best: bool = True               # garder le modèle qui généralise le mieux
+    checkpoint_every: int = 200          # point de reprise complet (poids + optimiseur)
 
 
 @dataclass

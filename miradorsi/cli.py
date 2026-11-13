@@ -160,6 +160,20 @@ def cmd_corpus_web(cfg, args) -> int:
     if args.topics_file:
         topics += [l.strip() for l in Path(args.topics_file).read_text(encoding="utf-8").splitlines()
                    if l.strip() and not l.lstrip().startswith("#")]
+    if args.from_page:
+        from .model.corpus import slugify, wikipedia_links
+        found: list[str] = []
+        for page in args.from_page:
+            links = wikipedia_links(client, page, args.lang)
+            print(f"  {len(links)} titres liés depuis « {page} »")
+            found += links
+        fresh = [t for t in dict.fromkeys(found) if not (out_dir / f"{slugify(t)}.txt").exists()]
+        if args.max_titles and len(fresh) > args.max_titles:  # échantillon réparti sur toute la liste
+            step = len(fresh) / args.max_titles
+            fresh = [fresh[int(i * step)] for i in range(args.max_titles)]
+        topics += fresh
+        args.exact = True
+        print(f"  {len(fresh)} nouveaux articles à collecter")
     if args.exact:
         from .model.corpus import build_wikipedia_bulk
         files = build_wikipedia_bulk(topics, client, out_dir, args.lang, args.max_chars)
@@ -241,6 +255,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-chars", type=int, default=60_000, help="taille max par article")
     p.add_argument("--exact", action="store_true",
                    help="les sujets sont des titres exacts : collecte groupée (10 articles par requête)")
+    p.add_argument("--from-page", action="append",
+                   help="collecter les articles liés depuis cette page (ex. une liste d'articles vitaux)")
+    p.add_argument("--max-titles", type=int, default=0, help="nombre max de nouveaux articles (--from-page)")
     p.set_defaults(func=cmd_corpus_web)
 
     sub.add_parser("lexique", help="recalculer la rareté des mots à partir du corpus"

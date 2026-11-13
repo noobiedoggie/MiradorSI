@@ -1,0 +1,36 @@
+# Configuration de Mirador SI dans l'application Android.
+# Les chemins relatifs partent du dossier mirador_app.
+
+[paths]
+identity = "config/identity.toml"
+corpus = "data/corpus"
+checkpoints = "modele"
+cache = ".cache/web"
+reports = "rapports"
+lexicon = "data/lexique_fr.json"
+
+[generation]
+temperature = 0.7
+top_k = 40
+top_p = 0.95
+max_new_tokens = 120
+repetition_penalty = 1.15
+
+[web]
+user_agent = "MiradorSI/0.4 (agent de recherche open source, Android) Python-urllib"
+timeout_seconds = 15
+max_bytes = 3_000_000
+retries = 3
+max_retry_wait_seconds = 30
+min_delay_seconds = 1.0
+respect_robots_txt = true
+cache_ttl_hours = 24
+search_providers = ["duckduckgo", "wikipedia"]
+wikipedia_languages = ["fr", "en"]
+
+[analysis]
+default_depth = 2
+results_per_query = 6
+max_sources = { 1 = 5, 2 = 8, 3 = 14 }
+max_per_domain = 2
+findings = { 1 = 4, 2 = 6, 3 = 10 }

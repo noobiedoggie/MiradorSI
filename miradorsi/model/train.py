@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -163,12 +164,29 @@ def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_to
         log(f"Mélange : {n_dialogue}/{tcfg.batch_size} séquences de dialogue par lot")
 
     model = build_model(mcfg.arch, **model_settings(cfg, tokenizer.vocab_size))
-    start_step = 0
-    if model_path.exists() and not fresh:
-        previous, extra = load_model(model_path)
-        if model_arch(previous) == model_arch(model) and previous.cfg == model.cfg:
-            model, start_step = previous, int(extra.get("step", 0))
-            log(f"Reprise de l'entraînement à l'étape {start_step}")
+    resume_path, optim_path = ckpt_dir / "reprise.npz", ckpt_dir / "reprise-optim.npz"
+    start_step, total = 0, steps
+    best_val, best_step = float("inf"), 0
+    optimizer_state = None
+
+    def compatible(other) -> bool:
+        return model_arch(other) == model_arch(model) and other.cfg == model.cfg
+
+    if not fresh and resume_path.exists():
+        previous, extra = load_model(resume_path)
+        if compatible(previous) and int(extra.get("step", 0)) < int(extra.get("total", 0)):
+            model = previous
+            start_step, total = int(extra["step"]), int(extra["total"])
+            best_val, best_step = float(extra.get("best_val", float("inf"))), int(extra.get("best_step", 0))
+            if optim_path.exists():
+                with np.load(optim_path) as archive:
+                    optimizer_state = {k: archive[k] for k in archive.files}
+            log(f"Reprise d'un entraînement interrompu : étape {start_step}/{total}")
+    if start_step == 0 and not fresh and model_path.exists():
+        previous, _ = load_model(model_path)
+        if compatible(previous):
+            model = previous
+            log("Nouvel entraînement à partir du modèle existant.")
         else:
             log("Architecture ou configuration modifiée : nouveau modèle initialisé.")
     describe = (f"{mcfg.n_layers} couches" if mcfg.arch == "transformer" else
@@ -177,14 +195,24 @@ def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_to
         f"d={model.cfg.d_model}")
 
     optimizer = AdamW(model.parameters(), lr=tcfg.learning_rate, weight_decay=tcfg.weight_decay)
+    if optimizer_state is not None:
+        optimizer.load_state_dict(optimizer_state)
     rng = np.random.default_rng(mcfg.seed + start_step)
-    total = start_step + steps
     t0 = time.time()
-    best_val, best_step = float("inf"), start_step
     tokens_seen = 0
     val_loss = float("nan")
+
+    def save_resume_point(done: int) -> None:
+        """Point de reprise complet, écrit de façon atomique (fichier temporaire puis renommage)."""
+        tmp_model, tmp_optim = ckpt_dir / "reprise.tmp.npz", ckpt_dir / "reprise-optim.tmp.npz"
+        save_model(model, tmp_model, extra={"step": done, "total": total, "best_val": best_val,
+                                            "best_step": best_step, "identity": identity.name})
+        np.savez(tmp_optim, **optimizer.state_dict())
+        os.replace(tmp_optim, optim_path)
+        os.replace(tmp_model, resume_path)
+
     for step in range(start_step, total):
-        lr = cosine_lr(step - start_step, steps, tcfg.learning_rate, tcfg.warmup_steps, tcfg.min_lr_ratio)
+        lr = cosine_lr(step, total, tcfg.learning_rate, tcfg.warmup_steps, tcfg.min_lr_ratio)
         x, y = get_batch(train_data, tcfg.batch_size - n_dialogue, context, rng)
         if n_dialogue:
             xd, yd = get_batch(dialogue_data, n_dialogue, context, rng)
@@ -214,6 +242,8 @@ def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_to
                     save_model(model, model_path, extra={**extra, "val_loss": val_loss})
             else:
                 save_model(model, model_path, extra={**extra, "val_loss": val_loss})
+        if done % tcfg.checkpoint_every == 0 or done == total:
+            save_resume_point(done)
 
     if val_context and tcfg.keep_best and best_step != total:
         model, _ = load_model(model_path)  # on garde le modèle qui généralise le mieux

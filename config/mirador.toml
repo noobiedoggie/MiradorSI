@@ -16,15 +16,15 @@ lexicon = "data/lexique_fr.json"   # rareté des mots (construit par `mirador co
 arch = "vigie"           # "vigie" : architecture compacte v0.2 · "transformer" : v0.1
 vocab_size = 4096        # taille du vocabulaire BPE (tokens spéciaux compris)
 context_length = 256     # longueur des séquences d'entraînement
-d_model = 384            # largeur des représentations
-n_heads = 4              # têtes d'attention
+d_model = 640            # largeur des représentations
+n_heads = 8              # têtes d'attention
 seed = 1337
 
 # Vigie uniquement
-d_embed = 192            # embeddings factorisés (0 = pas de factorisation)
+d_embed = 256            # embeddings factorisés (0 = pas de factorisation)
 pattern = "RA"           # blocs uniques : R = récurrent, A = attention locale
 n_loops = 2              # chaque bloc est réutilisé n_loops fois (profondeur recyclée)
-n_kv_heads = 1           # attention multi-requêtes : une seule paire clé/valeur
+n_kv_heads = 2           # attention à requêtes groupées : 2 paires clé/valeur
 window = 128             # portée de l'attention locale (la récurrence voit plus loin)
 
 # Transformer uniquement
@@ -32,19 +32,20 @@ n_layers = 4
 mlp_ratio = 4
 
 [training]
-steps = 4000
+steps = 9000             # ~10 h sur un CPU 4 cœurs (reprise automatique si interrompu)
 batch_size = 16
-learning_rate = 1.5e-3
+learning_rate = 1e-3
 min_lr_ratio = 0.1
-warmup_steps = 200
+warmup_steps = 300
 weight_decay = 0.1
 grad_clip = 1.0
-eval_every = 400
+eval_every = 500
 eval_batches = 8
 identity_repeats = 8     # combien de fois répéter les dialogues d'identité
 dialogue_ratio = 0.2     # part minimale des dialogues d'identité dans chaque lot
 tokenizer_sample_chars = 1_500_000
 keep_best = true         # garde le modèle qui fait le mieux sur du texte inédit
+checkpoint_every = 200   # point de reprise complet (poids + optimiseur)
 
 [generation]
 temperature = 0.7
