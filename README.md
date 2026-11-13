@@ -50,6 +50,35 @@ Dans `mirador chat` :
 
 ---
 
+## Application Android
+
+L'APK est compilé automatiquement par GitHub Actions (`.github/workflows/android.yml`) à chaque
+modification de `android/`, `miradorsi/` ou du modèle embarqué.
+
+**Pour l'installer :**
+1. Sur GitHub, ouvre l'onglet **Actions**, puis le dernier passage réussi de « APK Android ».
+2. Télécharge l'artefact **MiradorSI-apk**, qui contient `MiradorSI.apk`.
+3. Sur le téléphone, ouvre le fichier et autorise l'installation d'applications de cette source.
+
+**Ce que fait l'application :**
+- **Analyse sur internet** (icône loupe) : la même analyse approfondie que sur PC, qui recherche,
+  lit, recoupe puis cite ses sources. Les sources sont cliquables.
+- **Modèle local** (icône ordinateur) : discussion avec le réseau de neurones Vigie embarqué,
+  **hors ligne**.
+- **Dictée vocale**, historique des conversations sur le téléphone, choix de la profondeur
+  d'analyse (bouton +).
+
+**Comment c'est fait :**
+- Interface en Kotlin et Jetpack Compose.
+- Le code Python de Mirador SI et numpy sont embarqués tels quels grâce à
+  [Chaquopy](https://chaquo.com/chaquopy/) : c'est le même moteur que sur PC.
+- Le modèle compressé int8 est dans `android/app/src/main/python/mirador_app/modele/`. Pour
+  changer de modèle, remplace `model-int8.npz` et `tokenizer.json` par ceux de `checkpoints/`.
+- L'APK est un APK de débogage, installable directement. Pour le Play Store, il faudrait une clé
+  de signature (secret GitHub) et une compilation `assembleRelease`.
+
+---
+
 ## Architecture
 
 ```

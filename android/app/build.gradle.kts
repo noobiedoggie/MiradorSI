@@ -15,6 +15,7 @@ android {
         targetSdk = 35
         versionCode = 4
         versionName = "0.4.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // La quasi-totalité des téléphones récents ; x86_64 pour l'émulateur.
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -70,4 +71,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }
