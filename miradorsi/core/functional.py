@@ -136,3 +136,74 @@ def concat(tensors: list[Tensor], axis: int = -1) -> Tensor:
 
     data = np.concatenate([t.data for t in tensors], axis=axis)
     return Tensor.from_op(data, tensors, backward, "concat")
+
+
+def sigmoid(x: Tensor) -> Tensor:
+    y = 0.5 * (1.0 + np.tanh(0.5 * x.data))  # forme stable de 1 / (1 + e^-x)
+    return Tensor.from_op(y, (x,), lambda g: x.accumulate(g * y * (1.0 - y)), "sigmoid")
+
+
+def silu(x: Tensor) -> Tensor:
+    s = 0.5 * (1.0 + np.tanh(0.5 * x.data))
+    y = x.data * s
+
+    def backward(g):
+        x.accumulate(g * (s + x.data * s * (1.0 - s)))
+
+    return Tensor.from_op(y, (x,), backward, "silu")
+
+
+def causal_conv(x: Tensor, weight: Tensor, bias: Tensor) -> Tensor:
+    """Convolution causale « en profondeur » le long du temps.
+
+    x : (B, T, D), weight : (K, D), bias : (D,)  →  y[:, t] = Σ_k weight[k] · x[:, t-k] + bias
+    """
+    K = weight.data.shape[0]
+    B, T, D = x.data.shape
+    padded = np.concatenate([np.zeros((B, K - 1, D), dtype=x.data.dtype), x.data], axis=1)
+    y = np.broadcast_to(bias.data, (B, T, D)).copy()
+    for k in range(K):
+        y += weight.data[k] * padded[:, K - 1 - k: K - 1 - k + T]
+
+    def backward(g):
+        if bias.requires_grad:
+            bias.accumulate(g.sum(axis=(0, 1)))
+        if weight.requires_grad:
+            weight.accumulate(np.stack([(g * padded[:, K - 1 - k: K - 1 - k + T]).sum(axis=(0, 1))
+                                        for k in range(K)]))
+        if x.requires_grad:
+            gp = np.zeros_like(padded)
+            for k in range(K):
+                gp[:, K - 1 - k: K - 1 - k + T] += g * weight.data[k]
+            x.accumulate(gp[:, K - 1:])
+
+    return Tensor.from_op(y, (x, weight, bias), backward, "causal_conv")
+
+
+def linear_scan(a: Tensor, b: Tensor) -> Tensor:
+    """Récurrence linéaire h_t = a_t · h_{t-1} + b_t (h_{-1} = 0), élément par élément.
+
+    Les portes ne dépendant que de l'entrée, le coût est linéaire en T et l'état
+    à mémoriser pendant la génération est un simple vecteur.
+    """
+    av, bv = a.data, b.data
+    h = np.empty_like(bv)
+    state = np.zeros_like(bv[:, 0])
+    for t in range(bv.shape[1]):
+        state = av[:, t] * state + bv[:, t]
+        h[:, t] = state
+
+    def backward(g):
+        gb = np.empty_like(g)
+        carry = np.zeros_like(g[:, 0])
+        for t in range(g.shape[1] - 1, -1, -1):
+            carry = g[:, t] + carry
+            gb[:, t] = carry
+            carry = carry * av[:, t]
+        if b.requires_grad:
+            b.accumulate(gb)
+        if a.requires_grad:
+            previous = np.concatenate([np.zeros_like(h[:, :1]), h[:, :-1]], axis=1)
+            a.accumulate(gb * previous)
+
+    return Tensor.from_op(h, (a, b), backward, "linear_scan")

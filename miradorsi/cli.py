@@ -26,9 +26,15 @@ def cmd_info(cfg, args) -> int:
     if brain:
         m = brain.model
         params = f"{m.num_parameters():,}".replace(",", "\u202f")
-        print(f"Modèle      : MiradorLM, {params} paramètres")
-        print(f"Architecture: {m.cfg.n_layers} couches · d={m.cfg.d_model} · {m.cfg.n_heads} têtes · "
-              f"contexte {m.cfg.context_length} · vocabulaire {m.cfg.vocab_size}")
+        print(f"Modèle      : {params} paramètres")
+        if getattr(m, "arch", "transformer") == "vigie":
+            print(f"Architecture: Vigie · blocs {m.cfg.pattern} × {m.cfg.n_loops} passages · d={m.cfg.d_model} · "
+                  f"attention locale {m.cfg.window} tokens · vocabulaire {m.cfg.vocab_size}")
+        else:
+            print(f"Architecture: Transformer · {m.cfg.n_layers} couches · d={m.cfg.d_model} · "
+                  f"{m.cfg.n_heads} têtes · contexte {m.cfg.context_length} · vocabulaire {m.cfg.vocab_size}")
+        if brain.meta.get("quantized"):
+            print("Format      : compressé int8")
         if "val_loss" in brain.meta:
             print(f"Entraînement: étape {brain.meta.get('step')} · perte de validation "
                   f"{brain.meta['val_loss']:.3f}")
@@ -45,7 +51,37 @@ def cmd_train(cfg, args) -> int:
 
     if args.steps:
         cfg.training.steps = args.steps
-    train(cfg, steps=args.steps, fresh=args.fresh, retrain_tokenizer=args.retrain_tokenizer)
+    if args.arch:
+        cfg.model.arch = args.arch
+    train(cfg, steps=args.steps, fresh=args.fresh, retrain_tokenizer=args.retrain_tokenizer, int8=args.int8)
+    return 0
+
+
+def cmd_quantize(cfg, args) -> int:
+    from .model.checkpoint import load_model, save_model
+
+    source = cfg.path("checkpoints") / "model.npz"
+    if not source.exists():
+        print("Aucun modèle à compresser : lance d'abord `mirador train`.")
+        return 2
+    model, extra = load_model(source)
+    target = save_model(model, cfg.path("checkpoints") / "model-int8.npz", extra=extra, quantize=True)
+    before, after = source.stat().st_size, target.stat().st_size
+    print(f"{source.name} ({before / 1e6:.1f} Mo) → {target.name} ({after / 1e6:.1f} Mo), "
+          f"{before / after:.1f}× plus petit")
+    return 0
+
+
+def cmd_bench(cfg, args) -> int:
+    import json
+
+    from .model.bench import format_results, run_benchmark
+
+    results = run_benchmark(steps=args.steps, max_chars=args.chars)
+    table = format_results(results)
+    print("\n" + table)
+    if args.output:
+        Path(args.output).write_text(json.dumps(results, indent=2), encoding="utf-8")
     return 0
 
 
@@ -137,7 +173,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--steps", type=int, help="nombre d'étapes (défaut : config)")
     p.add_argument("--fresh", action="store_true", help="repartir de zéro")
     p.add_argument("--retrain-tokenizer", action="store_true", help="réapprendre le vocabulaire")
+    p.add_argument("--arch", choices=["vigie", "transformer"], help="architecture (défaut : config)")
+    p.add_argument("--int8", action="store_true", help="exporter aussi une version compressée int8")
     p.set_defaults(func=cmd_train)
+
+    sub.add_parser("quantize", help="compresser le modèle entraîné en int8 (~4× plus petit)"
+                   ).set_defaults(func=cmd_quantize)
+
+    p = sub.add_parser("bench", help="comparer les architectures sur ce PC")
+    p.add_argument("--steps", type=int, default=400)
+    p.add_argument("--chars", type=int, default=3_000_000, help="taille du corpus de test")
+    p.add_argument("-o", "--output", help="résultats JSON")
+    p.set_defaults(func=cmd_bench)
 
     p = sub.add_parser("analyze", aliases=["analyse"], help="analyse approfondie sur internet")
     p.add_argument("question")

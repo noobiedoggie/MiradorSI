@@ -256,9 +256,15 @@ class Tensor:
         if isinstance(index, Tensor):
             index = index.data.astype(np.int64)
 
+        basic = all(isinstance(i, (slice, int, type(Ellipsis))) or i is None
+                    for i in (index if isinstance(index, tuple) else (index,)))
+
         def backward(g):
             full = np.zeros_like(self.data)
-            np.add.at(full, index, g)
+            if basic:  # découpage simple : pas de doublons possibles, addition directe
+                full[index] += g
+            else:
+                np.add.at(full, index, g)
             self.accumulate(full)
 
         return Tensor.from_op(self.data[index], (self,), backward, "getitem")

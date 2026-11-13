@@ -1,8 +1,9 @@
-"""Entraînement de MiradorLM sur le corpus local + les dialogues d'identité."""
+"""Entraînement du modèle de Mirador SI (Vigie ou Transformer) sur le corpus local + l'identité."""
 
 from __future__ import annotations
 
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
 
@@ -11,8 +12,8 @@ import numpy as np
 from ..config import Config
 from ..core import AdamW, clip_grad_norm, cosine_lr, no_grad
 from ..identity import Identity
+from .checkpoint import build_model, load_model, model_arch, save_model
 from .tokenizer import BPETokenizer
-from .transformer import MiradorLM, ModelConfig
 
 TEXT_SUFFIXES = {".txt", ".md"}
 
@@ -26,17 +27,49 @@ def format_dialogue(user: str, assistant: str) -> str:
     return f"<|user|>{user}<|end|><|assistant|>{assistant}<|end|>\n"
 
 
-def load_corpus_text(corpus_dir: Path) -> str:
-    """Concatène tous les .txt / .md du dossier (récursivement), séparés par <|end|>."""
+def load_corpus_documents(corpus_dir: Path) -> list[str]:
+    """Tous les .txt / .md du dossier (récursivement), un document par fichier."""
     if not corpus_dir.exists():
-        return ""
+        return []
     texts = []
     for path in sorted(corpus_dir.rglob("*")):
         if path.suffix.lower() in TEXT_SUFFIXES and path.is_file() and path.name.lower() != "readme.md":
             content = path.read_text(encoding="utf-8", errors="replace").strip()
             if content:
                 texts.append(content)
-    return "\n<|end|>\n".join(texts) + ("\n<|end|>\n" if texts else "")
+    return texts
+
+
+def join_documents(texts: list[str]) -> str:
+    return "".join(f"{t}\n<|end|>\n" for t in texts)
+
+
+def load_corpus_text(corpus_dir: Path) -> str:
+    return join_documents(load_corpus_documents(corpus_dir))
+
+
+def split_documents(docs: list[str], fraction: float = 0.08) -> tuple[list[str], list[str]]:
+    """Met de côté des documents ENTIERS pour la validation (jamais vus à l'entraînement).
+
+    Avec un seul document, on garde sa fin : la validation reste du texte inédit.
+    """
+    if not docs:
+        return [], []
+    if len(docs) >= 5:
+        val = docs[::max(2, round(1 / fraction))]
+        return [d for d in docs if d not in val], val
+    cut = int(sum(map(len, docs)) * (1 - fraction))
+    train, val, seen = [], [], 0
+    for d in docs:
+        if seen + len(d) <= cut:
+            train.append(d)
+        elif seen >= cut:
+            val.append(d)
+        else:
+            train.append(d[: cut - seen])
+            val.append(d[cut - seen:])
+        seen += len(d)
+    return train, val
 
 
 def identity_corpus(identity: Identity, repeats: int, seed: int = 0) -> str:
@@ -49,7 +82,7 @@ def identity_corpus(identity: Identity, repeats: int, seed: int = 0) -> str:
     return "".join(chunks)
 
 
-def evaluate(model: MiradorLM, data: np.ndarray, batch_size: int, context: int, batches: int,
+def evaluate(model, data: np.ndarray, batch_size: int, context: int, batches: int,
              rng: np.random.Generator) -> float:
     losses = []
     with no_grad():
@@ -66,8 +99,15 @@ def get_batch(data: np.ndarray, batch_size: int, context: int, rng: np.random.Ge
     return x, y
 
 
+def model_settings(cfg: Config, vocab_size: int) -> dict:
+    settings = asdict(cfg.model)
+    settings.pop("arch")
+    settings["vocab_size"] = vocab_size
+    return settings
+
+
 def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_tokenizer: bool = False,
-          log: Callable[[str], None] = print) -> Path:
+          int8: bool = False, log: Callable[[str], None] = print) -> Path:
     identity = Identity.load(cfg.path("identity"))
     tcfg, mcfg = cfg.training, cfg.model
     steps = steps or tcfg.steps
@@ -75,50 +115,51 @@ def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_to
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     tok_path, model_path = ckpt_dir / "tokenizer.json", ckpt_dir / "model.npz"
 
-    corpus = load_corpus_text(cfg.path("corpus"))
-    text = corpus + identity_corpus(identity, tcfg.identity_repeats, mcfg.seed)
-    log(f"Corpus : {_n(len(corpus))} caractères de documents + dialogues d'identité "
-        f"→ {_n(len(text))} caractères au total")
+    docs = load_corpus_documents(cfg.path("corpus"))
+    train_docs, val_docs = split_documents(docs)
+    dialogues = identity_corpus(identity, tcfg.identity_repeats, mcfg.seed)
+    train_text = join_documents(train_docs) + dialogues
+    val_text = join_documents(val_docs)
+    log(f"Corpus : {len(docs)} document(s), {_n(sum(map(len, docs)))} caractères "
+        f"+ dialogues d'identité ({_n(len(dialogues))} caractères)")
 
     if tok_path.exists() and not (retrain_tokenizer or fresh):
         tokenizer = BPETokenizer.load(tok_path)
         log(f"Tokenizer chargé ({tokenizer.vocab_size} tokens)")
     else:
         log(f"Entraînement du tokenizer BPE (cible : {mcfg.vocab_size} tokens)…")
-        tokenizer = BPETokenizer.train(text, mcfg.vocab_size)
+        tokenizer = BPETokenizer.train(train_text + val_text, mcfg.vocab_size)
         tokenizer.save(tok_path)
         fresh = True  # nouveau vocabulaire → nouveau modèle
         log(f"Tokenizer prêt : {tokenizer.vocab_size} tokens")
 
-    data = np.array(tokenizer.encode(text), dtype=np.int64)
-    context = min(mcfg.context_length, max(16, len(data) // 4))
-    split = int(len(data) * 0.92)
-    train_data, val_data = data[:split], data[split:]
-    if len(val_data) <= context + 1:
-        val_data = data[-(context * 2 + 2):]
-    log(f"{_n(len(data))} tokens (entraînement {_n(len(train_data))}, validation {_n(len(val_data))})")
+    train_data = np.array(tokenizer.encode(train_text), dtype=np.int64)
+    val_data = np.array(tokenizer.encode(val_text), dtype=np.int64)
+    context = min(mcfg.context_length, max(16, len(train_data) // 4))
+    val_context = min(context, len(val_data) - 2)
+    if val_context < 16:
+        val_context = 0
+        log("Corpus trop petit pour une validation séparée : ajoute des documents dans data/corpus/.")
+    log(f"Tokens : entraînement {_n(len(train_data))}, validation {_n(len(val_data))} "
+        f"(documents jamais vus à l'entraînement)")
 
-    model_cfg = ModelConfig(vocab_size=tokenizer.vocab_size, context_length=mcfg.context_length,
-                            d_model=mcfg.d_model, n_layers=mcfg.n_layers, n_heads=mcfg.n_heads,
-                            mlp_ratio=mcfg.mlp_ratio, seed=mcfg.seed)
+    model = build_model(mcfg.arch, **model_settings(cfg, tokenizer.vocab_size))
     start_step = 0
     if model_path.exists() and not fresh:
-        model, extra = MiradorLM.load(model_path)
-        if model.cfg != model_cfg:
-            log("Configuration modifiée : nouveau modèle initialisé.")
-            model = MiradorLM(model_cfg)
-        else:
-            start_step = int(extra.get("step", 0))
+        previous, extra = load_model(model_path)
+        if model_arch(previous) == model_arch(model) and previous.cfg == model.cfg:
+            model, start_step = previous, int(extra.get("step", 0))
             log(f"Reprise de l'entraînement à l'étape {start_step}")
-    else:
-        model = MiradorLM(model_cfg)
-    log(f"MiradorLM : {_n(model.num_parameters())} paramètres, {model_cfg.n_layers} couches, "
-        f"d={model_cfg.d_model}, contexte={model_cfg.context_length}")
+        else:
+            log("Architecture ou configuration modifiée : nouveau modèle initialisé.")
+    describe = (f"{mcfg.n_layers} couches" if mcfg.arch == "transformer" else
+                f"blocs {model.cfg.pattern} × {model.cfg.n_loops} passages, fenêtre {model.cfg.window}")
+    log(f"Architecture {model_arch(model)} : {_n(model.num_parameters())} paramètres, {describe}, "
+        f"d={model.cfg.d_model}")
 
     optimizer = AdamW(model.parameters(), lr=tcfg.learning_rate, weight_decay=tcfg.weight_decay)
     rng = np.random.default_rng(mcfg.seed + start_step)
     total = start_step + steps
-    best_val = float("inf")
     t0 = time.time()
     tokens_seen = 0
     val_loss = float("nan")
@@ -138,13 +179,21 @@ def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_to
             log(f"étape {done:5d}/{total} | perte {loss.item():.3f} | lr {lr:.2e} | "
                 f"grad {grad_norm:.2f} | {_n(speed)} tokens/s")
         if done % tcfg.eval_every == 0 or done == total:
-            val_loss = evaluate(model, val_data, tcfg.batch_size, context, tcfg.eval_batches, rng)
-            log(f"  ↳ validation : perte {val_loss:.3f} (perplexité {np.exp(val_loss):.1f})")
-            best_val = min(best_val, val_loss)
-            model.save(model_path, extra={"step": done, "val_loss": val_loss, "identity": identity.name,
-                                          "tokenizer": tok_path.name})
+            if val_context:
+                val_loss = evaluate(model, val_data, tcfg.batch_size, val_context, tcfg.eval_batches, rng)
+                log(f"  ↳ validation (texte inédit) : perte {val_loss:.3f} (perplexité {np.exp(val_loss):.1f})")
+            save_model(model, model_path, extra={"step": done, "val_loss": val_loss, "identity": identity.name,
+                                                 "tokenizer": tok_path.name})
 
-    log(f"Modèle sauvegardé : {model_path}")
+    log(f"Modèle sauvegardé : {model_path} ({model_path.stat().st_size / 1e6:.1f} Mo)")
+    if val_context and val_loss > np.log(tokenizer.vocab_size):
+        log(f"⚠ Sur du texte inédit, le modèle fait moins bien que le hasard (perte {val_loss:.1f} > "
+            f"{np.log(tokenizer.vocab_size):.1f}) : il a mémorisé son corpus au lieu de généraliser. "
+            "Ajoute du texte (data/corpus/ ou `mirador corpus-web`) pour qu'il apprenne vraiment la langue.")
+    if int8:
+        q_path = save_model(model, ckpt_dir / "model-int8.npz",
+                            extra={"step": total, "val_loss": val_loss, "identity": identity.name}, quantize=True)
+        log(f"Version int8 : {q_path} ({q_path.stat().st_size / 1e6:.1f} Mo)")
     prompt = "<|user|>Qui es-tu ?<|end|><|assistant|>"
     sample_ids = model.generate(tokenizer.encode(prompt), max_new_tokens=60, temperature=0.5,
                                 stop_ids={tokenizer.end_id}, rng=np.random.default_rng(0))

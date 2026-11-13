@@ -22,13 +22,23 @@ class PathsConfig:
 
 @dataclass
 class ModelSettings:
+    arch: str = "vigie"            # "vigie" (compacte, v0.2) ou "transformer" (v0.1)
     vocab_size: int = 2048
     context_length: int = 256
-    d_model: int = 192
-    n_layers: int = 4
+    d_model: int = 288
     n_heads: int = 4
-    mlp_ratio: int = 4
     seed: int = 1337
+    # Vigie
+    d_embed: int = 128
+    pattern: str = "RA"
+    n_loops: int = 2
+    n_kv_heads: int = 1
+    window: int = 64
+    conv_kernel: int = 4
+    mlp_hidden: int = 0
+    # Transformer
+    n_layers: int = 4
+    mlp_ratio: int = 4
 
 
 @dataclass
@@ -55,7 +65,7 @@ class GenerationConfig:
 
 @dataclass
 class WebConfig:
-    user_agent: str = "MiradorSI/0.1 (agent de recherche)"
+    user_agent: str = "MiradorSI/0.2 (agent de recherche)"
     timeout_seconds: float = 15
     max_bytes: int = 3_000_000
     retries: int = 2

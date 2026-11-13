@@ -8,15 +8,16 @@ Architecture :
 
 from __future__ import annotations
 
-import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
 
 from ..core import functional as F
-from ..core.autograd import Tensor, get_default_dtype, no_grad
+from ..core.autograd import Tensor, get_default_dtype
 from ..core.nn import Embedding, Linear, Module, RMSNorm
+from . import streaming as S
 
 
 @dataclass
@@ -85,6 +86,8 @@ class Block(Module):
 
 
 class MiradorLM(Module):
+    arch = "transformer"
+
     def __init__(self, cfg: ModelConfig):
         self.cfg = cfg
         rng = np.random.default_rng(cfg.seed)
@@ -115,38 +118,57 @@ class MiradorLM(Module):
         return F.cross_entropy(self.forward(idx), targets, ignore_index)
 
     # ------------------------------------------------------------ génération
+    def init_state(self) -> dict:
+        """Cache clé/valeur circulaire par couche (borné à context_length) + poids q/k/v fusionnés."""
+        cfg, dtype = self.cfg, self.embed.weight.data.dtype
+        hd = cfg.d_model // cfg.n_heads
+        fused = [np.concatenate([b.attn.q.weight.data, b.attn.k.weight.data, b.attn.v.weight.data], 1)
+                 for b in self.blocks]
+        shape = (cfg.context_length, cfg.n_heads, hd)
+        runtime = SimpleNamespace(  # poids pré-calculés : hors de l'état, ils ne comptent pas comme mémoire
+            fused=fused, inv_freq=1.0 / (cfg.rope_base ** (np.arange(0, hd, 2, dtype=np.float64) / hd)))
+        return {"position": 0, "runtime": runtime,
+                "layers": [{"k": np.zeros(shape, dtype), "v": np.zeros(shape, dtype)} for _ in self.blocks]}
+
+    def step(self, token: int, state: dict) -> np.ndarray:
+        cfg = self.cfg
+        d, H, hd = cfg.d_model, cfg.n_heads, cfg.d_model // cfg.n_heads
+        position = state["position"]
+        runtime = state["runtime"]
+        angles = position * runtime.inv_freq
+        angles = np.concatenate([angles, angles])
+        dtype = self.embed.weight.data.dtype
+        cos, sin = np.cos(angles).astype(dtype), np.sin(angles).astype(dtype)
+        slot, filled = position % cfg.context_length, min(position + 1, cfg.context_length)
+        x = self.embed.weight.data[token]
+        for block, w_qkv, cache in zip(self.blocks, runtime.fused, state["layers"]):
+            z = S.rms_norm(x, block.norm1.weight.data, cfg.norm_eps) @ w_qkv
+            q, k = z[:d].reshape(H, 1, hd), z[d:2 * d].reshape(H, hd)
+            cache["k"][slot] = S.apply_rope(k, cos, sin)
+            cache["v"][slot] = z[2 * d:].reshape(H, hd)
+            keys, values = cache["k"][:filled], cache["v"][:filled]              # (n, H, hd)
+            weights = S.softmax(S.apply_rope(q, cos, sin) @ keys.transpose(1, 2, 0) / np.sqrt(hd))
+            x = x + (weights @ values.transpose(1, 0, 2)).reshape(-1) @ block.attn.out.weight.data
+            h = S.rms_norm(x, block.norm2.weight.data, cfg.norm_eps)
+            x = x + S.gelu(h @ block.mlp.up.weight.data) @ block.mlp.down.weight.data
+        state["position"] = position + 1
+        x = S.rms_norm(x, self.norm.weight.data, cfg.norm_eps)
+        return x @ self.embed.weight.data.T
+
     def generate(self, prompt_ids: list[int], max_new_tokens: int = 200, temperature: float = 0.8,
                  top_k: int | None = 40, top_p: float | None = 0.95, stop_ids: set[int] | None = None,
                  rng: np.random.Generator | None = None) -> list[int]:
-        rng = rng or np.random.default_rng()
-        ids = list(prompt_ids)
-        new: list[int] = []
-        stop_ids = stop_ids or set()
-        with no_grad():
-            for _ in range(max_new_tokens):
-                window = ids[-self.cfg.context_length:]
-                logits = self.forward(np.array(window)[None, :]).data[0, -1].astype(np.float64)
-                next_id = sample(logits, temperature, top_k, top_p, rng)
-                if next_id in stop_ids:
-                    break
-                ids.append(next_id)
-                new.append(next_id)
-        return new
+        return S.generate(self, prompt_ids, max_new_tokens, temperature, top_k, top_p, stop_ids, rng)
 
     # ------------------------------------------------------------ sauvegarde
     def save(self, path: str | Path, extra: dict | None = None) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        meta = {"config": asdict(self.cfg), "extra": extra or {}}
-        np.savez(path, __meta__=np.array(json.dumps(meta)), **self.state_dict())
+        from .checkpoint import save_model
+        save_model(self, path, extra)
 
     @classmethod
     def load(cls, path: str | Path) -> tuple["MiradorLM", dict]:
-        with np.load(Path(path), allow_pickle=False) as archive:
-            meta = json.loads(str(archive["__meta__"]))
-            model = cls(ModelConfig(**meta["config"]))
-            model.load_state_dict({k: archive[k] for k in archive.files if k != "__meta__"})
-        return model, meta.get("extra", {})
+        from .checkpoint import load_model
+        return load_model(path)
 
 
 def sample(logits: np.ndarray, temperature: float = 0.8, top_k: int | None = 40,

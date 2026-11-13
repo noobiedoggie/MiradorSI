@@ -116,3 +116,38 @@ def test_no_grad_builds_no_graph():
     with no_grad():
         out = a * 2
     assert not out.requires_grad
+
+
+def test_sigmoid_silu():
+    check(lambda a: F.sigmoid(a) * F.silu(a), (3, 4))
+
+
+def test_causal_conv():
+    check(lambda x, w, b: F.causal_conv(x, w, b), (2, 6, 3), (4, 3), (3,))
+
+
+def test_causal_conv_is_causal():
+    x = np.random.default_rng(0).standard_normal((1, 6, 2))
+    w, b = Tensor(np.ones((3, 2))), Tensor(np.zeros(2))
+    y1 = F.causal_conv(Tensor(x), w, b).data
+    x[0, 4:] = 99.0
+    y2 = F.causal_conv(Tensor(x), w, b).data
+    np.testing.assert_allclose(y1[0, :4], y2[0, :4])
+
+
+def test_linear_scan():
+    check(lambda a, b: F.linear_scan(F.sigmoid(a), b), (2, 7, 3), (2, 7, 3))
+
+
+def test_linear_scan_matches_loop():
+    rng = np.random.default_rng(1)
+    a, b = rng.uniform(0, 1, (1, 5, 2)), rng.standard_normal((1, 5, 2))
+    h, expected = np.zeros(2), []
+    for t in range(5):
+        h = a[0, t] * h + b[0, t]
+        expected.append(h.copy())
+    np.testing.assert_allclose(F.linear_scan(Tensor(a), Tensor(b)).data[0], np.array(expected))
+
+
+def test_basic_slicing_gradient():
+    check(lambda a: a[:, 1:3] * a[:, :2], (3, 4))

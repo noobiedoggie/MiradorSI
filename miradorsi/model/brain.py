@@ -7,12 +7,12 @@ from pathlib import Path
 import numpy as np
 
 from ..config import GenerationConfig
+from .checkpoint import load_model
 from .tokenizer import BPETokenizer
-from .transformer import MiradorLM
 
 
 class Brain:
-    def __init__(self, model: MiradorLM, tokenizer: BPETokenizer, gen: GenerationConfig | None = None,
+    def __init__(self, model, tokenizer: BPETokenizer, gen: GenerationConfig | None = None,
                  meta: dict | None = None):
         self.model = model
         self.tokenizer = tokenizer
@@ -22,10 +22,12 @@ class Brain:
 
     @classmethod
     def load(cls, checkpoint_dir: Path, gen: GenerationConfig | None = None) -> "Brain | None":
-        model_path, tok_path = checkpoint_dir / "model.npz", checkpoint_dir / "tokenizer.json"
-        if not (model_path.exists() and tok_path.exists()):
+        tok_path = checkpoint_dir / "tokenizer.json"
+        candidates = [checkpoint_dir / "model.npz", checkpoint_dir / "model-int8.npz"]
+        model_path = next((p for p in candidates if p.exists()), None)
+        if model_path is None or not tok_path.exists():
             return None
-        model, meta = MiradorLM.load(model_path)
+        model, meta = load_model(model_path)
         return cls(model, BPETokenizer.load(tok_path), gen, meta)
 
     @property
@@ -44,13 +46,12 @@ class Brain:
             if len(prompt_ids) <= budget or not turns:
                 break
             turns.pop(0)
-        prompt_ids = prompt_ids[-max(budget, 8):]
         out = self.model.generate(prompt_ids, self.gen.max_new_tokens, self.gen.temperature,
                                   self.gen.top_k, self.gen.top_p, self.stop_ids, self.rng)
         return self.tokenizer.decode(out, skip_special=True).strip()
 
     def complete(self, text: str, max_new_tokens: int | None = None) -> str:
-        ids = self.tokenizer.encode(text)[-self.model.cfg.context_length:]
+        ids = self.tokenizer.encode(text)
         out = self.model.generate(ids, max_new_tokens or self.gen.max_new_tokens, self.gen.temperature,
                                   self.gen.top_k, self.gen.top_p, {self.tokenizer.end_id}, self.rng)
         return self.tokenizer.decode(out, skip_special=True)

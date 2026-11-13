@@ -10,15 +10,25 @@ checkpoints = "checkpoints"
 cache = ".cache/web"
 reports = "reports"
 
-# --- Le réseau de neurones (Transformer écrit de zéro) ----------------------
+# --- Le réseau de neurones (écrit de zéro) -----------------------------------
 [model]
+arch = "vigie"           # "vigie" : architecture compacte v0.2 · "transformer" : v0.1
 vocab_size = 2048        # taille du vocabulaire BPE (tokens spéciaux compris)
-context_length = 256     # nombre max de tokens vus en même temps
-d_model = 192            # largeur des représentations
-n_layers = 4             # nombre de blocs Transformer
-n_heads = 4              # têtes d'attention par bloc
-mlp_ratio = 4
+context_length = 256     # longueur des séquences d'entraînement
+d_model = 288            # largeur des représentations
+n_heads = 4              # têtes d'attention
 seed = 1337
+
+# Vigie uniquement
+d_embed = 128            # embeddings factorisés (0 = pas de factorisation)
+pattern = "RA"           # blocs uniques : R = récurrent, A = attention locale
+n_loops = 2              # chaque bloc est réutilisé n_loops fois (profondeur recyclée)
+n_kv_heads = 1           # attention multi-requêtes : une seule paire clé/valeur
+window = 64              # portée de l'attention locale (la récurrence voit plus loin)
+
+# Transformer uniquement
+n_layers = 4
+mlp_ratio = 4
 
 [training]
 steps = 600
@@ -40,7 +50,7 @@ max_new_tokens = 160
 
 # --- Accès à internet --------------------------------------------------------
 [web]
-user_agent = "MiradorSI/0.1 (agent de recherche)"
+user_agent = "MiradorSI/0.2 (agent de recherche)"
 timeout_seconds = 15
 max_bytes = 3_000_000
 retries = 2
