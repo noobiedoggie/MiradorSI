@@ -167,6 +167,11 @@ jobs:
         with:
           name: MiradorSI-apk
 
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: capture-accueil
+
       - name: Remplacer la release « apk »
         env:
           GH_TOKEN: ${{ github.token }}
@@ -181,5 +186,7 @@ jobs:
           d'applications de cette source quand Android le demande. Android 8.0 ou plus récent.
           EOF
           gh release delete apk --yes --cleanup-tag || true
-          gh release create apk MiradorSI.apk --target "$GITHUB_SHA" --latest \
+          fichiers="MiradorSI.apk"
+          [ -f capture-accueil.png ] && fichiers="$fichiers capture-accueil.png"
+          gh release create apk $fichiers --target "$GITHUB_SHA" --latest \
             --title "Mirador SI — APK Android" --notes-file notes.md
