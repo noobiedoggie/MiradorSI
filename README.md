@@ -159,6 +159,28 @@ En pratique, la v0.3 reste dans le sujet de son amorce (la Lune → planètes, S
 partait n'importe où. Mais **les faits qu'elle écrit restent inventés** : à 4 M de paramètres,
 elle a appris la forme du français encyclopédique, pas encore le savoir.
 
+### Vigie-500M : la configuration existe, l'entraînement demande des GPU
+
+`config/mirador-500m.toml` décrit une Vigie de **496,7 M de paramètres** : d=1280, 28 blocs,
+attention à requêtes groupées, contexte de 512 tokens. Elle se construit et apprend : sa perte
+passe de 8,41 à 7,71 en trois étapes. Voici ce qu'elle coûte, mesuré sur un CPU 4 cœurs :
+
+| | v0.3 (4,3 M) | Vigie-500M |
+|---|---|---|
+| Entraînement | ~2 600 tokens/s | **~50 tokens/s** |
+| Un passage sur le corpus actuel (5,2 M tokens) | ~35 min | ~29 h |
+| Entraînement complet (~20 tokens par paramètre ≈ 10 milliards de tokens) | — | ~6 ans sur ce CPU |
+| Mémoire pour l'entraîner | < 1 Go | 10,6 Go |
+| Génération | ~150 tokens/s | 1,7 token/s |
+| Fichier (int8) | 4,0 Mo | ~0,5 Go |
+
+À temps de calcul égal sur CPU, la 500M lit environ 60 fois moins de texte que la v0.3, et
+finit **moins bonne**. La taille ne paie que si le calcul et les données suivent : pour cette
+configuration, il faut un moteur sur carte graphique et une dizaine de milliards de tokens.
+
+Pour l'essayer quand même (les points de reprise vont dans `checkpoints-500m/`) :
+`mirador --config config/mirador-500m.toml train`
+
 ### Historique : premier entraînement sur Wikipédia (v0.2)
 
 `mirador corpus-web --topics-file data/sujets_fr.txt` collecte des articles de Wikipédia en
