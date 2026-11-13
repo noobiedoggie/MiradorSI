@@ -31,7 +31,8 @@ class ModelesOuvertsTest {
     @Test
     fun telechargeEtFaitEcrireUnModeleOuvert() = runBlocking {
         val modeles = GestionnaireModeles(context)
-        assertTrue("moteur natif indisponible : ${MoteurNatif.erreurChargement}", modeles.moteurDisponible())
+        val disponible = modeles.moteurDisponible()  // d'abord charger, ensuite lire l'erreur éventuelle
+        assertTrue("moteur natif indisponible : ${MoteurNatif.erreurChargement}", disponible)
         if (!modeles.installe(petit)) modeles.telecharger(petit) { _, _ -> }
         assertTrue(modeles.installe(petit))
 
