@@ -2,6 +2,8 @@ package com.miradorsi.app
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -21,8 +23,14 @@ class InterfaceTest {
     val regle = createAndroidComposeRule<MainActivity>()
 
     private fun attendreTexte(texte: String, delaiMs: Long = 30_000) {
-        regle.waitUntil(delaiMs) {
-            regle.onAllNodesWithText(texte, substring = true).fetchSemanticsNodes().isNotEmpty()
+        try {
+            regle.waitUntil(delaiMs) {
+                regle.onAllNodesWithText(texte, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (e: Throwable) {
+            // en cas d'échec, on montre ce qui est vraiment à l'écran
+            throw AssertionError("« $texte » absent après $delaiMs ms. Écran : " +
+                regle.onRoot(useUnmergedTree = true).printToString().replace(Regex("\\s+"), " ").take(1500), e)
         }
     }
 
@@ -38,7 +46,7 @@ class InterfaceTest {
         regle.onNodeWithContentDescription("Analyse sur internet").assertIsDisplayed()
         regle.onNodeWithContentDescription("Modèle local").assertIsDisplayed()
         regle.onNodeWithContentDescription("Dicter").assertIsDisplayed()
-        attendreTexte("Bibliothèque")  # bandeau de la bibliothèque hors ligne
+        attendreTexte("Bibliothèque")  // bandeau de la bibliothèque hors ligne (à télécharger ou installée)
     }
 
     @Test

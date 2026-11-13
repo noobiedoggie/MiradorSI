@@ -140,7 +140,7 @@ jobs:
                   for balise in ("failure", "error"):
                       detail = cas.find(balise)
                       if detail is not None:
-                          print("  > " + " ".join((detail.text or detail.get("message") or "").split())[:400])
+                          print("  > " + " ".join((detail.text or detail.get("message") or "").split())[:1800])
           print(f"\n**{total - echecs}/{total} tests réussis**")
           PY
 

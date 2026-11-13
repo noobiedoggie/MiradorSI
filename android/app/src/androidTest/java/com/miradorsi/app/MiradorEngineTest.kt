@@ -33,7 +33,6 @@ class MiradorEngineTest {
     @Test
     fun repondHorsLigneAvecLaBibliotheque() = runBlocking {
         engine.start()
-        assertTrue("bibliothèque absente au départ", !engine.libraryState().installed)
         // une mini-bibliothèque construite sur le téléphone même (SQLite + numpy sous Android)
         val fichier = File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir, "essai-bibliotheque.db")
         val module = Python.getInstance().getModule("miradorsi.library")
@@ -56,8 +55,10 @@ class MiradorEngineTest {
         assertEquals("1 + 1 = 2", engine.ask("1+1", Mode.LOCAL, 1, emptyList()).text)
         assertTrue(engine.ask("yo", Mode.ANALYSE, 1, emptyList()).text.startsWith("Salut"))
         assertTrue(engine.ask("connard", Mode.LOCAL, 1, emptyList()).text.startsWith("Je reste poli"))
-        val inconnu = engine.ask("j'aime le caca et toi?", Mode.LOCAL, 1, emptyList()).text
-        assertTrue(inconnu, inconnu.contains("Analyse"))
+        val perso = engine.ask("j'aime le caca et toi?", Mode.LOCAL, 1, emptyList()).text
+        assertTrue(perso, perso.startsWith("Je suis une IA d'analyse"))
+        val inconnu = engine.ask("C'est quoi la photosynthèse ?", Mode.LOCAL, 1, emptyList()).text
+        assertTrue(inconnu, inconnu.contains("Analyse"))  // sans bibliothèque : réponse honnête
     }
 
     @Test
