@@ -28,6 +28,28 @@ class WebError(Exception):
     """Erreur réseau ou HTTP (non fatale pour une analyse)."""
 
 
+class HttpStatusError(WebError):
+    """Réponse HTTP en erreur ; `retry_after` vient de l'en-tête Retry-After (secondes)."""
+
+    def __init__(self, status: int, url: str, retry_after: float | None = None):
+        super().__init__(f"HTTP {status} sur {url}")
+        self.status = status
+        self.retry_after = retry_after
+
+    @property
+    def retryable(self) -> bool:
+        return self.status == 429 or self.status >= 500
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None  # format date HTTP : on se rabat sur le délai exponentiel
+
+
 @dataclass
 class HttpResponse:
     url: str
@@ -66,6 +88,7 @@ class WebClient:
         self.cfg = cfg or WebConfig()
         self.cache_dir = Path(self.cfg.cache_dir) if self.cfg.cache_dir else None
         self._last_hit: dict[str, float] = {}
+        self._host_delay: dict[str, float] = {}  # délais allongés après un « trop de requêtes »
         self._robots: dict[str, robotparser.RobotFileParser | None] = {}
         self._lock = threading.Lock()
         self._ssl = ssl.create_default_context()
@@ -88,20 +111,28 @@ class WebClient:
             raise WebError(f"Accès refusé par robots.txt : {url}")
 
         last_error: Exception | None = None
+        host = urllib.parse.urlsplit(url).netloc
         for attempt in range(self.cfg.retries + 1):
             try:
                 self._wait_politely(url)
                 response = self._request(url, headers or {})
-                if response.status >= 500 or response.status == 429:
-                    raise WebError(f"HTTP {response.status} sur {url}")
                 if use_cache and response.status == 200:
                     self._cache_write(url, response)
                 return response
+            except HttpStatusError as exc:
+                last_error = exc
+                if not exc.retryable or attempt == self.cfg.retries:
+                    break
+                wait = exc.retry_after if exc.retry_after is not None else 2.0 * 2 ** attempt
+                if wait > self.cfg.max_retry_wait_seconds:
+                    break  # le serveur demande d'attendre trop longtemps : on abandonne poliment
+                if exc.status == 429:  # trop de requêtes : on ralentit durablement pour ce site
+                    self._host_delay[host] = min(30.0, max(self._delay_for(host) * 2, 2.0))
+                time.sleep(wait)
             except (WebError, urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
                 last_error = exc
-                if isinstance(exc, WebError) and "HTTP 4" in str(exc):
-                    break
-                time.sleep(min(2 ** attempt, 8) * 0.5)
+                if attempt < self.cfg.retries:
+                    time.sleep(min(2 ** attempt, 8) * 0.5)
         raise WebError(f"Échec de {url} : {last_error}")
 
     # ------------------------------------------------------------ interne
@@ -121,7 +152,8 @@ class WebClient:
                 final_url = resp.geturl()
                 resp_headers = {k.lower(): v for k, v in resp.headers.items()}
         except urllib.error.HTTPError as err:
-            raise WebError(f"HTTP {err.code} sur {url}") from err
+            retry_after = _parse_retry_after(err.headers.get("Retry-After") if err.headers else None)
+            raise HttpStatusError(err.code, url, retry_after) from err
         if len(body) > self.cfg.max_bytes:
             body = body[: self.cfg.max_bytes]
         encoding = resp_headers.get("content-encoding", "").lower()
@@ -134,11 +166,14 @@ class WebClient:
             pass  # contenu tronqué : on garde les octets bruts
         return HttpResponse(final_url, status, resp_headers, body)
 
+    def _delay_for(self, host: str) -> float:
+        return self._host_delay.get(host, self.cfg.min_delay_seconds)
+
     def _wait_politely(self, url: str) -> None:
         host = urllib.parse.urlsplit(url).netloc
         with self._lock:
             now = time.monotonic()
-            wait = self._last_hit.get(host, 0.0) + self.cfg.min_delay_seconds - now
+            wait = self._last_hit.get(host, 0.0) + self._delay_for(host) - now
             self._last_hit[host] = max(now, now + wait)
         if wait > 0:
             time.sleep(wait)

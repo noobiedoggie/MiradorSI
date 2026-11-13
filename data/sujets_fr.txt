@@ -1,0 +1,87 @@
+# Sujets pour `mirador corpus-web --topics-file data/sujets_fr.txt`
+# Un sujet par ligne. Culture générale variée, en français.
+# Sciences et techniques
+Physique
+Chimie
+Biologie
+Mathématiques
+Astronomie
+Évolution (biologie)
+Génétique
+Climat
+Réchauffement climatique
+Écologie
+Énergie nucléaire
+Énergie renouvelable
+Électricité
+Informatique
+Intelligence artificielle
+Internet
+Médecine
+Vaccin
+Système immunitaire
+Cerveau
+Océan
+Volcan
+Séisme
+Eau
+Agriculture
+# Histoire
+Révolution française
+Première Guerre mondiale
+Seconde Guerre mondiale
+Empire romain
+Moyen Âge
+Renaissance
+Napoléon Ier
+Guerre froide
+Révolution industrielle
+Grèce antique
+Colonisation
+Décolonisation
+# Géographie
+France
+Paris
+Europe
+Afrique
+Asie
+Canada
+Québec
+Belgique
+Suisse
+Sénégal
+Maroc
+Allemagne
+Chine
+Inde
+États-Unis
+Japon
+Brésil
+# Société, économie, institutions
+Démocratie
+Union européenne
+Organisation des Nations unies
+Économie
+Inflation
+Chômage
+Mondialisation
+Droits de l'homme
+Constitution française
+Éducation
+Journalisme
+Désinformation
+Statistique
+Sondage d'opinion
+Méthode scientifique
+Esprit critique
+Philosophie
+Littérature française
+Langue française
+Cinéma
+Musique
+Sport
+Jeux olympiques
+Santé publique
+Urbanisme
+Transport
+Aviation

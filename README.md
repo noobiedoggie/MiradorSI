@@ -32,7 +32,8 @@ mirador quantize            # compresse un modèle entraîné en int8 (~4× plus
 mirador analyze "Quel est l'impact de l'IA sur l'emploi en France ?" -d 3
 mirador search "énergie solaire France 2025"
 mirador read https://fr.wikipedia.org/wiki/Mirador
-mirador corpus-web "intelligence artificielle" "esprit critique"   # enrichit le corpus
+mirador corpus-web --topics-file data/sujets_fr.txt   # ~160 articles Wikipédia (≈ 4 Mo de français)
+mirador corpus-web "intelligence artificielle" "esprit critique"   # ou tes propres sujets
 ```
 
 Dans `mirador chat` :
@@ -178,8 +179,16 @@ Garde-fous :
 
 - les constats sont des **extraits fidèles** des sources : rien n'est inventé ;
 - un chiffre différent ne compte jamais comme confirmation (20 GW ≠ 18 GW, c'est une divergence) ;
+- deux pages d'**un même site** ne se confirment pas l'une l'autre : seule une source *indépendante*
+  corrobore (Wikipédia recopie souvent des sections d'un article à l'autre) ;
+- les **noms propres** de la question sont des contraintes : à « … en France ? », une phrase sur
+  l'Allemagne est écartée, même si elle est très proche par ailleurs ;
+- les mots **rares** de la question pèsent plus lourd (« solaire » plus que « production ») grâce
+  au lexique de fond (`data/lexique_fr.json`), calculé sur le corpus ;
 - chaque source reçoit une note de fiabilité **expliquée** ;
-- les erreurs réseau ne bloquent pas l'analyse : elles sont listées dans le rapport.
+- les erreurs réseau ne bloquent pas l'analyse : elles sont listées dans le rapport ;
+- quand un site répond « trop de requêtes » (HTTP 429), Mirador attend le délai demandé
+  (`Retry-After`) puis ralentit durablement pour ce site.
 
 | Profondeur | Requêtes | Sources max | Relances |
 |---|---|---|---|

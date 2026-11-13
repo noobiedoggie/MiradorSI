@@ -1,5 +1,6 @@
 import gzip
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -51,6 +52,7 @@ def test_normalize_url():
 
 class _Handler(BaseHTTPRequestHandler):
     hits = 0
+    limited = 0
 
     def log_message(self, *args):
         pass
@@ -61,6 +63,20 @@ class _Handler(BaseHTTPRequestHandler):
             body = b"User-agent: *\nDisallow: /prive\n"
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
+        elif self.path.startswith("/limite"):
+            _Handler.limited += 1
+            if _Handler.limited == 1:  # première fois : « trop de requêtes, réessaie dans 0 s »
+                body = b"trop de requetes"
+                self.send_response(429)
+                self.send_header("Retry-After", "0")
+            else:
+                body = b"ok enfin"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+        elif self.path.startswith("/attente"):
+            body = b"reviens plus tard"
+            self.send_response(429)
+            self.send_header("Retry-After", "3600")
         elif self.path.startswith("/page"):
             body = gzip.compress(PAGE.encode("utf-8"))
             self.send_response(200)
@@ -94,3 +110,15 @@ def test_client_fetch_gzip_cache_and_robots(server, tmp_path):
         client.get(server + "/prive/x")
     with pytest.raises(WebError, match="404"):
         client.get(server + "/manquant")
+
+
+def test_client_honors_retry_after(server, tmp_path):
+    client = WebClient(WebConfig(min_delay_seconds=0, cache_dir="", retries=2, respect_robots_txt=False))
+    assert client.get(server + "/limite").text == "ok enfin"      # attend puis réessaie
+    host = server.split("//")[1]
+    assert client._delay_for(host) >= 2.0                         # et ralentit pour ce site
+    fresh = WebClient(WebConfig(min_delay_seconds=0, cache_dir="", retries=2, respect_robots_txt=False))
+    start = time.monotonic()
+    with pytest.raises(WebError, match="429"):
+        fresh.get(server + "/attente")                            # 1 h demandée : abandon immédiat
+    assert time.monotonic() - start < 2

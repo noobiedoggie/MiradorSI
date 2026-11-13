@@ -1,7 +1,7 @@
 from miradorsi.analysis.credibility import assess
 from miradorsi.analysis.facts import compare_facts, extract_facts
 from miradorsi.analysis.rank import BM25
-from miradorsi.analysis.researcher import DeepAnalyzer
+from miradorsi.analysis.researcher import DeepAnalyzer, question_entities
 from miradorsi.analysis.text import (chunk_words, content_terms, detect_language, keywords,
                                      split_sentences)
 from miradorsi.config import AnalysisConfig
@@ -145,3 +145,50 @@ def test_analysis_without_internet_is_graceful():
     report = DeepAnalyzer(Offline(), FakeFetcher()).analyze("Question sans réseau", depth=1)
     assert not report.findings and report.errors
     assert "Aucune information exploitable" in report.to_markdown()
+
+
+def test_same_site_pages_do_not_corroborate_each_other():
+    shared = ("La puissance photovoltaïque installée en France atteint 20 GW fin 2024 selon le gestionnaire. "
+              "Cette puissance progresse chaque année grâce aux nouvelles centrales. ")
+    pages = {
+        "https://fr.wikipedia.org/wiki/A": ("Solaire en France", shared * 4 + FILLER * 2),
+        "https://fr.wikipedia.org/wiki/B": ("Électricité en France", shared + (
+            "Le réseau électrique français relie les centrales aux consommateurs sur tout le territoire. "
+            "Les échanges avec les pays voisins équilibrent l'offre et la demande en hiver. "
+            "La consommation dépend fortement de la température et du chauffage électrique. ") * 5),
+    }
+
+    class Search:
+        errors = []
+
+        def search(self, query, max_results=8, lang="fr"):
+            return [SearchResult(t, u, "", "fake", i) for i, (u, (t, _)) in enumerate(pages.items(), 1)]
+
+    class Fetch:
+        def fetch(self, url):
+            return Document(url=url, title=pages[url][0], text=pages[url][1])
+
+    report = DeepAnalyzer(Search(), Fetch(), AnalysisConfig(max_per_domain=5, min_document_chars=100)) \
+        .analyze("Quelle est la puissance photovoltaïque installée en France ?", depth=1)
+    assert len(report.sources) == 2 and report.findings
+    assert all(f.supporting == [] for f in report.findings)   # même site : pas de corroboration
+    assert report.corroborated == []
+
+
+def test_question_entities():
+    assert question_entities("Quelle est la part du solaire en France ?") == {"france"}
+    assert question_entities("Quel est le rôle de l'ONU et de l'Union européenne ?") == {"onu", "union"}
+    assert question_entities("Comment fonctionne la photosynthèse ?") == set()
+
+
+def test_lexicon_makes_rare_question_words_decisive():
+    from miradorsi.analysis.lexicon import Lexicon, build_idf
+
+    background = ["La production d'électricité en France augmente chaque année dans les régions. " * 3,
+                  "La part de la production nationale dépend de la France et de ses centrales. " * 3,
+                  "L'électricité est produite en France par plusieurs filières industrielles. " * 3,
+                  "Les panneaux solaires transforment la lumière en courant pour les maisons. " * 3] * 3
+    idf = build_idf(background, min_df=1)
+    assert idf["solaire"] > idf["production"]
+    weights = Lexicon(idf, max(idf.values())).question_weights({"solaire", "production", "france"})
+    assert weights["solaire"] > weights["production"] and abs(sum(weights.values()) / 3 - 1) < 1e-9

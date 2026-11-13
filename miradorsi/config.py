@@ -18,6 +18,7 @@ class PathsConfig:
     checkpoints: str = "checkpoints"
     cache: str = ".cache/web"
     reports: str = "reports"
+    lexicon: str = "data/lexique_fr.json"
 
 
 @dataclass
@@ -53,6 +54,9 @@ class TrainingConfig:
     eval_every: int = 100
     eval_batches: int = 4
     identity_repeats: int = 8
+    dialogue_ratio: float = 0.2          # part minimale des dialogues d'identité dans chaque lot
+    tokenizer_sample_chars: int = 1_500_000
+    keep_best: bool = True               # garder le modèle qui généralise le mieux
 
 
 @dataclass
@@ -65,10 +69,11 @@ class GenerationConfig:
 
 @dataclass
 class WebConfig:
-    user_agent: str = "MiradorSI/0.2 (agent de recherche)"
+    user_agent: str = "MiradorSI/0.2 (agent de recherche open source) Python-urllib"
     timeout_seconds: float = 15
     max_bytes: int = 3_000_000
-    retries: int = 2
+    retries: int = 3
+    max_retry_wait_seconds: float = 60
     min_delay_seconds: float = 1.0
     respect_robots_txt: bool = True
     cache_ttl_hours: float = 24

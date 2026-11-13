@@ -156,10 +156,29 @@ def cmd_corpus_web(cfg, args) -> int:
     client = WebClient(cfg.web)
     out_dir = cfg.path("corpus") / "web"
     print(f"Collecte de Wikipédia ({args.lang}) → {out_dir}")
-    files = build_web_corpus(args.topics, WikipediaSearch(client, [args.lang]), Fetcher(client),
-                             out_dir, args.lang, args.per_topic)
+    topics = list(args.topics)
+    if args.topics_file:
+        topics += [l.strip() for l in Path(args.topics_file).read_text(encoding="utf-8").splitlines()
+                   if l.strip() and not l.lstrip().startswith("#")]
+    files = build_web_corpus(topics, WikipediaSearch(client, [args.lang]), Fetcher(client),
+                             out_dir, args.lang, args.per_topic, args.max_chars)
     print(f"{len(files)} document(s) ajouté(s). Relance `mirador train --retrain-tokenizer` pour apprendre.")
+    cmd_lexicon(cfg, args)
     return 0 if files else 2
+
+
+def cmd_lexicon(cfg, args) -> int:
+    from .analysis.lexicon import build_idf, save_lexicon
+    from .model.train import load_corpus_documents
+
+    docs = load_corpus_documents(cfg.path("corpus"))
+    if not docs:
+        print("Corpus vide : rien à analyser.")
+        return 2
+    idf = build_idf(docs)
+    path = save_lexicon(idf, cfg.path("lexicon"), source=f"{len(docs)} documents de {cfg.paths.corpus}")
+    print(f"Lexique : {len(idf)} mots, rareté calculée sur {len(docs)} documents → {path}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -211,10 +230,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("chat", help="conversation interactive").set_defaults(func=cmd_chat)
 
     p = sub.add_parser("corpus-web", help="enrichir le corpus d'entraînement depuis Wikipédia")
-    p.add_argument("topics", nargs="+")
+    p.add_argument("topics", nargs="*")
+    p.add_argument("--topics-file", help="fichier texte : un sujet par ligne")
     p.add_argument("--lang", default="fr")
     p.add_argument("--per-topic", type=int, default=3)
+    p.add_argument("--max-chars", type=int, default=60_000, help="taille max par article")
     p.set_defaults(func=cmd_corpus_web)
+
+    sub.add_parser("lexique", help="recalculer la rareté des mots à partir du corpus"
+                   ).set_defaults(func=cmd_lexicon)
     return parser
 
 

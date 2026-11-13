@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Callable
 
+from .analysis.lexicon import load_lexicon
 from .analysis.researcher import AnalysisReport, DeepAnalyzer
 from .analysis.text import content_terms
 from .config import Config
@@ -50,7 +51,9 @@ class MiradorAgent:
         client = WebClient(cfg.web)
         search = SearchEngine.from_config(cfg.web, client)
         fetcher = Fetcher(client)
-        analyzer = DeepAnalyzer(search, fetcher, cfg.analysis, on_progress, analyst=identity.name)
+        lexicon = load_lexicon(str(cfg.path("lexicon")))
+        analyzer = DeepAnalyzer(search, fetcher, cfg.analysis, on_progress, analyst=identity.name,
+                                lexicon=lexicon)
         brain = Brain.load(cfg.path("checkpoints"), cfg.generation) if load_brain else None
         return cls(cfg, identity, analyzer, search, fetcher, brain, on_progress)
 

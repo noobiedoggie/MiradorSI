@@ -39,6 +39,11 @@ FACETS = {
            "research study analysis", "history origin", "pros and cons", "criticism controversy"],
 }
 DEPTH_LABELS = {1: "rapide", 2: "standard", 3: "approfondie"}
+LEAD_CHARS = 1500  # début de document considéré comme « chapeau »
+QUANTITATIVE_RE = re.compile(
+    r"\b(combien|part|parts|pourcentage|proportion|taux|nombre|chiffres?|montant|quantit[ée]|"
+    r"statistiques?|niveau|volume|co[uû]t|prix|how (many|much)|percentage|share|rate|number|amount)\b",
+    re.I)
 
 
 class SearchLike(Protocol):
@@ -155,7 +160,8 @@ def _normalized(values: np.ndarray) -> np.ndarray:
 class DeepAnalyzer:
     def __init__(self, search: SearchLike, fetcher: FetcherLike, cfg: AnalysisConfig | None = None,
                  on_progress: Callable[[str], None] | None = None, analyst: str = "Mirador SI",
-                 max_workers: int = 4):
+                 max_workers: int = 4, lexicon=None):
+        self.lexicon = lexicon  # rareté des mots dans la langue (optionnel, voir analysis/lexicon.py)
         self.search_engine = search
         self.fetcher = fetcher
         self.cfg = cfg or AnalysisConfig()
@@ -299,7 +305,11 @@ class DeepAnalyzer:
         if not passages:
             return
         question_terms = set(content_terms(question))
-        weights = {t: 1.0 for t in question_terms}
+        entities = question_entities(question)
+        # Poids des mots de la question : rareté dans la langue (lexique) × nom propre
+        rarity = self.lexicon.question_weights(question_terms) if self.lexicon else {}
+        term_weight = {t: rarity.get(t, 1.0) * (2.0 if t in entities else 1.0) for t in question_terms}
+        weights = dict(term_weight)
         for t in content_terms(" ".join(report.queries)):
             weights.setdefault(t, 0.3)
 
@@ -330,10 +340,33 @@ class DeepAnalyzer:
             return
 
         sentence_bm25 = BM25([c[2] for c in candidates])
-        overlap = np.array([len(question_terms & set(c[2])) / max(1, len(question_terms)) for c in candidates])
-        relevance = (0.45 * _normalized(sentence_bm25.scores(list(weights), weights))
-                     + 0.25 * _normalized(np.array([c[3] for c in candidates]))
-                     + 0.30 * overlap)
+        # Le titre du document sert de contexte : « Elle fournit 6 % de la production… » dans
+        # l'article « Énergie solaire en France » parle bien du solaire en France.
+        source_by_id = {s.id: s for s in report.sources}
+        title_terms = {s.id: set(content_terms(s.title)) for s in report.sources}
+        total_weight = sum(term_weight.values()) or 1.0
+
+        def coverage(found: set[str]) -> float:
+            return sum(term_weight[t] for t in question_terms & found) / total_weight
+
+        overlap = np.array([0.6 * coverage(set(terms)) + 0.4 * coverage(set(terms) | title_terms[sid])
+                            for sid, _, terms, _ in candidates])
+        relevance = (0.40 * _normalized(sentence_bm25.scores(list(weights), weights))
+                     + 0.20 * _normalized(np.array([c[3] for c in candidates]))
+                     + 0.40 * overlap)
+        # Bonus : phrase d'introduction (les chapeaux résument), chiffre pour une question chiffrée
+        quantitative = bool(QUANTITATIVE_RE.search(question))
+        for i, (sid, sentence, terms, _) in enumerate(candidates):
+            bonus = 1.0
+            if 0 <= source_by_id[sid].text.find(sentence) < LEAD_CHARS:
+                bonus += 0.12
+            if quantitative and extract_facts(sentence, sid):
+                bonus += 0.15
+            # Un nom propre de la question (« France ») est une contrainte : une phrase sur
+            # l'Allemagne, même très proche par ailleurs, répond à une autre question.
+            if entities and not entities & (set(terms) | title_terms[sid]):
+                bonus *= 0.55
+            relevance[i] = min(1.0, relevance[i] * bonus)
 
         # --- recoupement : la même idée (avec les mêmes chiffres) dans d'autres sources ?
         index = TfidfIndex([p.terms for p in passages] + [c[2] for c in candidates])
@@ -344,13 +377,17 @@ class DeepAnalyzer:
         support: list[list[int]] = []
         for (source_id, *_), vec, numbers in zip(candidates, sentence_vectors, sentence_numbers):
             best: dict[int, float] = {}
+            own_domain = source_by_id[source_id].domain
             for p, pvec, pnumbers in zip(passages, passage_vectors, passage_numbers):
-                if p.source_id == source_id or (numbers and not numbers & pnumbers):
+                if source_by_id[p.source_id].domain == own_domain:
+                    continue  # deux pages d'un même site ne sont pas des sources indépendantes
+                if numbers and not numbers & pnumbers:
                     continue  # un chiffre différent ne corrobore pas : il contredit
                 sim = TfidfIndex.cosine(vec, pvec)
                 if sim > best.get(p.source_id, 0.0):
                     best[p.source_id] = sim
-            support.append(sorted(s for s, sim in best.items() if sim >= cfg.corroboration_threshold))
+            support.append(_one_per_domain(
+                sorted(s for s, sim in best.items() if sim >= cfg.corroboration_threshold), source_by_id))
 
         n = len(candidates)
         similarity = np.zeros((n, n))
@@ -359,7 +396,6 @@ class DeepAnalyzer:
                 similarity[i, j] = similarity[j, i] = TfidfIndex.cosine(sentence_vectors[i], sentence_vectors[j])
         centrality = _normalized(textrank(similarity))
 
-        source_by_id = {s.id: s for s in report.sources}
         other_sources = max(1, len(report.sources) - 1)
         scores = []
         for i, (source_id, *_rest) in enumerate(candidates):
@@ -379,7 +415,8 @@ class DeepAnalyzer:
                          and sentence_numbers[i] == sentence_numbers[j]), None)
             if twin is not None:
                 finding = report.findings[chosen.index(twin)]
-                if source_id != finding.source_id and source_id not in finding.supporting:
+                domains = {source_by_id[x].domain for x in [finding.source_id, *finding.supporting]}
+                if source_by_id[source_id].domain not in domains:
                     finding.supporting = sorted(finding.supporting + [source_id])
                 continue
             if per_source.get(source_id, 0) >= 3 or len(report.findings) >= k:
@@ -398,8 +435,9 @@ class DeepAnalyzer:
             for sentence in split_sentences(passages[pi].text):
                 facts.extend(extract_facts(sentence, passages[pi].source_id))
         unique = {(f.source_id, f.value, f.unit, f.sentence): f for f in facts}
-        report.corroborated, report.divergent = compare_facts(list(unique.values()))
-        report.corroborated = report.corroborated[:8]
+        corroborated, report.divergent = compare_facts(list(unique.values()))
+        report.corroborated = [g for g in corroborated  # confirmé = au moins deux SITES différents
+                               if len({source_by_id[i].domain for i in g.source_ids}) >= 2][:8]
         report.divergent = report.divergent[:6]
 
         # --- pistes à creuser
@@ -430,6 +468,28 @@ class DeepAnalyzer:
             if len(leads) >= k:
                 break
         return leads
+
+
+def question_entities(question: str) -> set[str]:
+    """Noms propres de la question (mots à majuscule hors début de phrase), normalisés."""
+    words = re.findall(r"[^\W\d_][\w'’-]*", question)
+    out = set()
+    for i, word in enumerate(words):
+        word = word.split("'")[-1].split("’")[-1]
+        if i > 0 and word[:1].isupper() and len(word) > 1:
+            out.update(content_terms(word))
+    return out
+
+
+def _one_per_domain(source_ids: list[int], source_by_id: dict) -> list[int]:
+    """Garde une seule source par site : la corroboration compte des sites indépendants."""
+    seen, kept = set(), []
+    for sid in source_ids:
+        domain = source_by_id[sid].domain
+        if domain not in seen:
+            seen.add(domain)
+            kept.append(sid)
+    return kept
 
 
 _QUANTITY_RE = re.compile(r"\d+(?:[.,]\d+)?")

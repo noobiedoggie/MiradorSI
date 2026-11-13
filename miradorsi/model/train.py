@@ -99,6 +99,15 @@ def get_batch(data: np.ndarray, batch_size: int, context: int, rng: np.random.Ge
     return x, y
 
 
+def _sample_text(text: str, max_chars: int, pieces: int = 200) -> str:
+    """Échantillon réparti sur tout le corpus (pour apprendre le vocabulaire plus vite)."""
+    if len(text) <= max_chars:
+        return text
+    size = max_chars // pieces
+    step = len(text) // pieces
+    return "\n".join(text[i * step: i * step + size] for i in range(pieces))
+
+
 def model_settings(cfg: Config, vocab_size: int) -> dict:
     settings = asdict(cfg.model)
     settings.pop("arch")
@@ -118,7 +127,7 @@ def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_to
     docs = load_corpus_documents(cfg.path("corpus"))
     train_docs, val_docs = split_documents(docs)
     dialogues = identity_corpus(identity, tcfg.identity_repeats, mcfg.seed)
-    train_text = join_documents(train_docs) + dialogues
+    docs_text = join_documents(train_docs)
     val_text = join_documents(val_docs)
     log(f"Corpus : {len(docs)} document(s), {_n(sum(map(len, docs)))} caractères "
         f"+ dialogues d'identité ({_n(len(dialogues))} caractères)")
@@ -128,20 +137,30 @@ def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_to
         log(f"Tokenizer chargé ({tokenizer.vocab_size} tokens)")
     else:
         log(f"Entraînement du tokenizer BPE (cible : {mcfg.vocab_size} tokens)…")
-        tokenizer = BPETokenizer.train(train_text + val_text, mcfg.vocab_size)
+        tokenizer = BPETokenizer.train(_sample_text(docs_text, tcfg.tokenizer_sample_chars) + dialogues,
+                                       mcfg.vocab_size)
         tokenizer.save(tok_path)
         fresh = True  # nouveau vocabulaire → nouveau modèle
         log(f"Tokenizer prêt : {tokenizer.vocab_size} tokens")
 
-    train_data = np.array(tokenizer.encode(train_text), dtype=np.int64)
+    doc_data = np.array(tokenizer.encode(docs_text), dtype=np.int64)
+    dialogue_data = np.array(tokenizer.encode(dialogues), dtype=np.int64)
     val_data = np.array(tokenizer.encode(val_text), dtype=np.int64)
+    # Mélange : les dialogues d'identité gardent une part fixe de chaque lot, sinon un gros corpus
+    # les noierait (Mirador apprendrait la langue mais oublierait qui il est).
+    natural = len(dialogue_data) / max(1, len(doc_data) + len(dialogue_data))
+    mixed = tcfg.dialogue_ratio > natural and len(dialogue_data) > mcfg.context_length + 1
+    train_data = doc_data if mixed else np.concatenate([doc_data, dialogue_data])
     context = min(mcfg.context_length, max(16, len(train_data) // 4))
+    n_dialogue = max(1, round(tcfg.batch_size * tcfg.dialogue_ratio)) if mixed else 0
     val_context = min(context, len(val_data) - 2)
     if val_context < 16:
         val_context = 0
         log("Corpus trop petit pour une validation séparée : ajoute des documents dans data/corpus/.")
-    log(f"Tokens : entraînement {_n(len(train_data))}, validation {_n(len(val_data))} "
-        f"(documents jamais vus à l'entraînement)")
+    log(f"Tokens : documents {_n(len(doc_data))}, dialogues {_n(len(dialogue_data))}, "
+        f"validation {_n(len(val_data))} (documents jamais vus à l'entraînement)")
+    if mixed:
+        log(f"Mélange : {n_dialogue}/{tcfg.batch_size} séquences de dialogue par lot")
 
     model = build_model(mcfg.arch, **model_settings(cfg, tokenizer.vocab_size))
     start_step = 0
@@ -161,11 +180,15 @@ def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_to
     rng = np.random.default_rng(mcfg.seed + start_step)
     total = start_step + steps
     t0 = time.time()
+    best_val, best_step = float("inf"), start_step
     tokens_seen = 0
     val_loss = float("nan")
     for step in range(start_step, total):
         lr = cosine_lr(step - start_step, steps, tcfg.learning_rate, tcfg.warmup_steps, tcfg.min_lr_ratio)
-        x, y = get_batch(train_data, tcfg.batch_size, context, rng)
+        x, y = get_batch(train_data, tcfg.batch_size - n_dialogue, context, rng)
+        if n_dialogue:
+            xd, yd = get_batch(dialogue_data, n_dialogue, context, rng)
+            x, y = np.concatenate([x, xd]), np.concatenate([y, yd])
         loss = model.loss(x, y)
         optimizer.zero_grad()
         loss.backward()
@@ -179,12 +202,23 @@ def train(cfg: Config, steps: int | None = None, fresh: bool = False, retrain_to
             log(f"étape {done:5d}/{total} | perte {loss.item():.3f} | lr {lr:.2e} | "
                 f"grad {grad_norm:.2f} | {_n(speed)} tokens/s")
         if done % tcfg.eval_every == 0 or done == total:
+            extra = {"step": done, "identity": identity.name, "tokenizer": tok_path.name}
             if val_context:
-                val_loss = evaluate(model, val_data, tcfg.batch_size, val_context, tcfg.eval_batches, rng)
-                log(f"  ↳ validation (texte inédit) : perte {val_loss:.3f} (perplexité {np.exp(val_loss):.1f})")
-            save_model(model, model_path, extra={"step": done, "val_loss": val_loss, "identity": identity.name,
-                                                 "tokenizer": tok_path.name})
+                val_loss = evaluate(model, val_data, tcfg.batch_size, val_context, tcfg.eval_batches,
+                                    np.random.default_rng(123))  # mêmes fenêtres à chaque évaluation
+                improved = val_loss < best_val
+                log(f"  ↳ validation (texte inédit) : perte {val_loss:.3f} (perplexité {np.exp(val_loss):.1f})"
+                    + ("  ★ meilleur" if improved else ""))
+                if improved or not tcfg.keep_best:
+                    best_val, best_step = min(best_val, val_loss), done
+                    save_model(model, model_path, extra={**extra, "val_loss": val_loss})
+            else:
+                save_model(model, model_path, extra={**extra, "val_loss": val_loss})
 
+    if val_context and tcfg.keep_best and best_step != total:
+        model, _ = load_model(model_path)  # on garde le modèle qui généralise le mieux
+        val_loss = best_val
+        log(f"Meilleur modèle retenu : étape {best_step} (perte de validation {best_val:.3f})")
     log(f"Modèle sauvegardé : {model_path} ({model_path.stat().st_size / 1e6:.1f} Mo)")
     if val_context and val_loss > np.log(tokenizer.vocab_size):
         log(f"⚠ Sur du texte inédit, le modèle fait moins bien que le hasard (perte {val_loss:.1f} > "

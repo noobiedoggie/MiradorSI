@@ -96,6 +96,17 @@ def extract_facts(sentence: str, source_id: int) -> list[NumericFact]:
     return facts
 
 
+# Mots qui décrivent l'unité plutôt que le sujet : ils ne suffisent pas à dire que deux
+# chiffres parlent de la même chose.
+_UNIT_WORDS = frozenset({"twh", "gwh", "mwh", "kwh", "gw", "mw", "kw", "km", "kg", "euro", "dollar",
+                         "pourcent", "percent", "an", "annee", "year", "million", "milliard", "billion",
+                         "environ", "pres", "plus", "moins", "total", "soit", "contre"})
+
+
+def _subject(context: frozenset) -> frozenset:
+    return context - _UNIT_WORDS
+
+
 def _jaccard(a: frozenset, b: frozenset) -> float:
     if not a or not b:
         return 0.0
@@ -103,10 +114,15 @@ def _jaccard(a: frozenset, b: frozenset) -> float:
 
 
 def compare_facts(facts: list[NumericFact], context_threshold: float = 0.25,
-                  tolerance: float = 0.03) -> tuple[list[FactGroup], list[tuple[FactGroup, FactGroup]]]:
+                  tolerance: float = 0.03, divergence_threshold: float = 0.4,
+                  divergence_shared: int = 3, sentence_threshold: float = 0.35
+                  ) -> tuple[list[FactGroup], list[tuple[FactGroup, FactGroup]]]:
     """Regroupe les chiffres qui parlent de la même chose.
 
     Renvoie (chiffres corroborés par plusieurs sources, paires de groupes divergents).
+    Une divergence exige un contexte beaucoup plus proche qu'un accord : deux valeurs
+    égales avec un contexte voisin se confirment, mais deux valeurs différentes ne se
+    contredisent que si elles décrivent vraiment le même sujet.
     """
     n = len(facts)
     parent = list(range(n))
@@ -117,17 +133,25 @@ def compare_facts(facts: list[NumericFact], context_threshold: float = 0.25,
             i = parent[i]
         return i
 
+    sentence_terms = [_subject(frozenset(t for t in content_terms(f.sentence) if not any(c.isdigit() for c in t)))
+                      for f in facts]
     related: list[tuple[int, int]] = []
     for i in range(n):
         for j in range(i + 1, n):
             a, b = facts[i], facts[j]
-            if a.unit != b.unit or _jaccard(a.context, b.context) < context_threshold:
+            if a.unit != b.unit:
+                continue
+            sa, sb = _subject(a.context), _subject(b.context)
+            similarity = _jaccard(sa, sb)
+            if similarity < context_threshold:
                 continue
             biggest = max(abs(a.value), abs(b.value)) or 1.0
             if abs(a.value - b.value) / biggest <= tolerance:
                 parent[find(i)] = find(j)
-            elif biggest / (min(abs(a.value), abs(b.value)) or 1e-9) < 10:
-                related.append((i, j))
+            elif (similarity >= divergence_threshold and len(sa & sb) >= divergence_shared
+                  and _jaccard(sentence_terms[i], sentence_terms[j]) >= sentence_threshold
+                  and biggest / (min(abs(a.value), abs(b.value)) or 1e-9) < 10):
+                related.append((i, j))  # même affirmation, chiffres différents
 
     groups: dict[int, FactGroup] = {}
     for i in range(n):
