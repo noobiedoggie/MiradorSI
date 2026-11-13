@@ -93,11 +93,11 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
-            gradle -p android connectedDebugAndroidTest --stacktrace
             gradle -p android installDebug
             adb shell am start -n com.miradorsi.app/.MainActivity
             sleep 20
             adb exec-out screencap -p > capture-accueil.png
+            gradle -p android connectedDebugAndroidTest --stacktrace
 
       - name: Capture d'écran de l'accueil
         if: always()
@@ -137,6 +137,10 @@ jobs:
                   rate = cas.find("failure") is not None or cas.find("error") is not None
                   echecs += rate
                   print(f"- {'❌' if rate else '✅'} {cas.get('name')} ({float(cas.get('time', 0)):.1f} s)")
+                  for balise in ("failure", "error"):
+                      detail = cas.find(balise)
+                      if detail is not None:
+                          print("  > " + " ".join((detail.text or detail.get("message") or "").split())[:400])
           print(f"\n**{total - echecs}/{total} tests réussis**")
           PY
 

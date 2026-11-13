@@ -296,7 +296,7 @@ private fun LigneConversation(c: Conversation, onOuvrir: (Conversation) -> Unit,
             modifier = Modifier.weight(1f))
         Box {
             androidx.compose.material3.IconButton(onClick = { menu = true }) {
-                Icon(Icons.Filled.MoreVert, "Options", tint = Texte2)
+                Icon(Icons.Filled.MoreVert, "Options de la conversation", tint = Texte2)
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Supprimer") }, onClick = { menu = false; onSupprimer(c) })
@@ -334,7 +334,7 @@ private fun Composer(
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box {
-                    BoutonRond(Icons.Filled.Add, "Options", { menu = true }, taille = 46)
+                    BoutonRond(Icons.Filled.Add, "Réglages de l'analyse", { menu = true }, taille = 46)
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         listOf(1 to "Analyse rapide", 2 to "Analyse standard", 3 to "Analyse approfondie").forEach { (n, nom) ->
                             DropdownMenuItem(

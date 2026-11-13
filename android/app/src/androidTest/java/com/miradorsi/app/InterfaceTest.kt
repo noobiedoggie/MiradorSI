@@ -1,5 +1,6 @@
 package com.miradorsi.app
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -33,7 +34,7 @@ class InterfaceTest {
         regle.onNodeWithContentDescription("Nouvelle conversation").assertIsDisplayed()
         regle.onNodeWithContentDescription("Bibliothèque").assertIsDisplayed()
         regle.onNodeWithText("Que souhaitez-vous analyser ?").assertIsDisplayed()
-        regle.onNodeWithContentDescription("Options").assertIsDisplayed()
+        regle.onNodeWithContentDescription("Réglages de l'analyse").assertIsDisplayed()
         regle.onNodeWithContentDescription("Analyse sur internet").assertIsDisplayed()
         regle.onNodeWithContentDescription("Modèle local").assertIsDisplayed()
         regle.onNodeWithContentDescription("Dicter").assertIsDisplayed()
@@ -46,6 +47,7 @@ class InterfaceTest {
         regle.onNode(hasSetTextAction()).performTextInput("Qui es-tu ?")
         regle.onNodeWithContentDescription("Envoyer").performClick()
         attendreTexte("Je suis Mirador SI")
-        regle.onNodeWithText("Qui es-tu ?").assertIsDisplayed()
+        // la question apparaît dans le titre de la conversation et dans la bulle de l'utilisateur
+        regle.onAllNodesWithText("Qui es-tu ?").assertCountEquals(2)
     }
 }
