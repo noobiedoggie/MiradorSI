@@ -1,0 +1,51 @@
+package com.miradorsi.app
+
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/** L'accueil contient les éléments de la maquette, et une vraie conversation s'affiche. */
+@RunWith(AndroidJUnit4::class)
+class InterfaceTest {
+    @get:Rule
+    val regle = createAndroidComposeRule<MainActivity>()
+
+    private fun attendreTexte(texte: String, delaiMs: Long = 30_000) {
+        regle.waitUntil(delaiMs) {
+            regle.onAllNodesWithText(texte, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    @Test
+    fun accueilContientLesElementsDeLaMaquette() {
+        attendreTexte("hors ligne")  // bandeau : le modèle embarqué est chargé
+        regle.onNodeWithText("mirador").assertIsDisplayed()
+        regle.onNodeWithContentDescription("À propos").assertIsDisplayed()
+        regle.onNodeWithContentDescription("Nouvelle conversation").assertIsDisplayed()
+        regle.onNodeWithContentDescription("Bibliothèque").assertIsDisplayed()
+        regle.onNodeWithText("Que souhaitez-vous analyser ?").assertIsDisplayed()
+        regle.onNodeWithContentDescription("Options").assertIsDisplayed()
+        regle.onNodeWithContentDescription("Analyse sur internet").assertIsDisplayed()
+        regle.onNodeWithContentDescription("Modèle local").assertIsDisplayed()
+        regle.onNodeWithContentDescription("Dicter").assertIsDisplayed()
+    }
+
+    @Test
+    fun conversationHorsLigneAfficheLaReponse() {
+        attendreTexte("hors ligne")
+        regle.onNodeWithContentDescription("Modèle local").performClick()
+        regle.onNode(hasSetTextAction()).performTextInput("Qui es-tu ?")
+        regle.onNodeWithContentDescription("Envoyer").performClick()
+        attendreTexte("Je suis Mirador SI")
+        regle.onNodeWithText("Qui es-tu ?").assertIsDisplayed()
+    }
+}
