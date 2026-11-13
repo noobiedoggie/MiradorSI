@@ -20,12 +20,15 @@ _DEFINITION = re.compile(
 )
 _INTERROGATIVE = re.compile(r"\b(combien|quand|ou|pourquoi|comment|quel|quelle|quels|quelles|lequel|qui|"
                             r"est-ce que|how|when|where|why|which)\b")
-_NOISE = re.compile(r"\s*\((?:prononcé[^()]*|écouter|API[^()]*|\s*[,;]?\s*)\)")
+_NOISE = re.compile(r"\s*\((?:prononcé[^()]*|écouter|API[^()]*|\s*[,;]?\s*|[^()]*/[^()]*/[^()]*|"
+                    r"[^()]*[\u0370-\u03FF\u0400-\u04FF\u0590-\u06FF\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF][^()]*)\)")
 
 
 def question_kind(question: str) -> str:
     """« definition » (de quoi s'agit-il ?) ou « precise » (un fait particulier)."""
     q = normalize(question).replace("’", "'").strip(" ?!.")
+    if re.match(r"(et |mais |alors )?(sa|son|ses|leur|leurs) ", q):
+        return "precise"  # « Et sa population ? » : une propriété du sujet de la conversation
     if re.match(r"(qui|quel|quelle) (est|etait|sont|etaient) (le|la|les|l') ", q):
         return "precise"  # « qui est le président de la France ? » : une personne, pas une définition
     if _DEFINITION.match(q):

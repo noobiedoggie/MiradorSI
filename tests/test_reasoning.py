@@ -21,6 +21,8 @@ def _facts(tmp_path):
         "Pologne": "La Pologne est un État d'Europe centrale.\nPologne — Capitale : Varsovie.",
         "Emmanuel Macron": "Emmanuel Macron, né le 21 décembre 1977 à Amiens, est un homme d'État.\n"
                            "Emmanuel Macron — Date : de naissance 21 décembre 1977 (48 ans).",
+        "Kylian Mbappé": "Kylian Mbappé, né le 20 décembre 1998 à Paris, est un footballeur.\n"
+                         "Kylian Mbappé — Date de naissance : 20 décembre 1998 (27 ans).",
     }
     for i, (title, text) in enumerate(articles.items()):
         builder.add(title, text, 1e-5 / (i + 1))
@@ -45,6 +47,8 @@ def test_age_comparison_and_chain(tmp_path):
     assert age.text.startswith("Emmanuel Macron a 48 ans [1].")
     dead = reasoner.answer("Quel âge avait Marie Curie à sa mort ?")
     assert dead.text.startswith("Marie Curie est morte à 66 ans [1].") and "née le 7 novembre 1867" in dead.text
+    older = reasoner.answer("Qui est le plus âgé entre Emmanuel Macron et Kylian Mbappé ?")
+    assert older.text.startswith("Emmanuel Macron est plus âgé que Kylian Mbappé.")
     compare = reasoner.answer("Qui est le plus peuplé, Lyon ou Marseille ?")
     assert compare.text.startswith("Marseille est plus peuplé que Lyon.")
     assert [title for title, _ in compare.sources] == ["Lyon", "Marseille"]

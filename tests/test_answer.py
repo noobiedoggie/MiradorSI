@@ -18,6 +18,7 @@ def test_question_kind():
     assert question_kind("Pourquoi le ciel est bleu ?") == "precise"
     assert question_kind("Qui est le président de la France ?") == "precise"
     assert question_kind("Qui est Kylian Mbappé ?") == "definition"
+    assert question_kind("Et sa population ? (Japon)") == "precise"
 
 
 def test_definition_answer_starts_with_the_article_lead():

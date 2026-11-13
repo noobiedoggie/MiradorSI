@@ -247,6 +247,13 @@ class Facts:
                         values.setdefault(f"Lieu {kind.lower()}", split.group(2))
                     continue
                 values.setdefault(label, value)
+        # fiches au format « Date de naissance / Lieu de naissance / Date de décès »
+        for label, kind in (("Date de naissance", "Naissance"), ("Date de décès", "Décès")):
+            if values.get(label):
+                values.setdefault(kind, values[label])
+        for label, kind in (("Lieu de naissance", "Lieu naissance"), ("Lieu de décès", "Lieu décès")):
+            if values.get(label):
+                values.setdefault(kind, values[label])
         if "Lieu naissance" in values and "Naissance" in values and not re.search(r"\d{3,4}\s+\S", values["Naissance"]):
             values["Naissance"] = f"{values['Naissance']} {values['Lieu naissance']}"
         return title, values
