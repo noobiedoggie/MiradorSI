@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Callable
 
-from .analysis.answer import compose_answer
+from .analysis.answer import compose_answer, direct_answer
 from .analysis.lexicon import load_lexicon
 from .analysis.researcher import AnalysisReport, DeepAnalyzer
 from .analysis.text import content_terms, normalize, strip_idioms
@@ -314,7 +314,9 @@ class MiradorAgent:
             return len(wanted & found) / len(wanted) if wanted else 1.0
 
         top = sorted(report.findings, key=lambda f: -f.relevance)[:3]
-        return report if max(coverage(f) for f in top) >= 0.6 else None
+        if max(coverage(f) for f in top) >= 0.6 or direct_answer(report):
+            return report  # (la fiche de l'article répond : « Auteur : Victor Hugo »)
+        return None
 
     def analyze(self, question: str, depth: int | None = None) -> str:
         report = self.analyzer.analyze(question, depth)

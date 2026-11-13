@@ -179,6 +179,10 @@ class Library:
         scores *= (matched / len(terms)) ** 2 * (1 + 0.3 * self.prior)
         for doc_id in self._title_matches(query):
             scores[doc_id] = scores[doc_id] * 2.0 + 1.0  # « Trou noir » pour « c'est quoi un trou noir »
+        # l'article d'une entité nommée dans la question (« France », « Les Misérables ») est
+        # toujours lu en premier : c'est lui qui a la fiche qui répond
+        for doc_id in self._entity_matches(query):
+            scores[doc_id] = float(scores.max()) + 1.0
         top = np.argsort(-scores)[:k]
         hits = [int(i) for i in top if scores[i] > 0]
         titles = {}
@@ -200,6 +204,30 @@ class Library:
         # la correspondance la plus longue d'abord (« Révolution française » plutôt que « Révolution »)
         best = sorted(rows, key=lambda row: -len(row[0]))
         return [doc_id for _, doc_id in best[:2]]
+
+    def _entity_matches(self, query: str) -> list[int]:
+        """Titres d'articles qui correspondent aux noms propres de la question (majuscule ailleurs
+        qu'en début de phrase) : « Qui est le président de la France ? » → « France »."""
+        tokens = [t.replace("’", "'").split("'")[-1] for t in re.findall(r"[\w'’-]+", strip_idioms(query))]
+        found: list[int] = []
+        i = 1
+        while i < len(tokens):
+            if tokens[i][:1].isupper():
+                j = i
+                while j + 1 < len(tokens) and (tokens[j + 1][:1].isupper() or
+                                               (tokens[j + 1] in ("de", "du", "des", "la") and j + 2 < len(tokens)
+                                                and tokens[j + 2][:1].isupper())):
+                    j += 1
+                start = i - 1 if tokens[i - 1].lower() in ("le", "la", "les") else i  # « Les Misérables »
+                for a, b in ((start, j), (i, j)):
+                    doc_id = self.find(" ".join(tokens[a:b + 1]))
+                    if doc_id is not None and doc_id not in found:
+                        found.append(doc_id)
+                        break
+                i = j + 1
+            else:
+                i += 1
+        return found[:2]
 
     def find(self, title: str) -> int | None:
         with self._lock:

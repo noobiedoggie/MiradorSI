@@ -15,6 +15,10 @@ on:
       - ".github/workflows/bibliotheque.yml"
       - "miradorsi/library.py"   # nettoyage ou format changés : on reconstruit
 
+concurrency:
+  group: bibliotheque
+  cancel-in-progress: true   # une construction plus récente remplace la précédente
+
 jobs:
   construire:
     name: Construire et publier la bibliothèque

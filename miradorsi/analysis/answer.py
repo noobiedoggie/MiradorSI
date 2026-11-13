@@ -18,7 +18,7 @@ _DEFINITION = re.compile(
     r"^(qu'?est[- ]ce (que|qu'|qui)|c'?est quoi|ca veut dire|que veut dire|qui (est|etait|sont|etaient)|"
     r"definition|definis|explique|parle[- ]moi|presente|resume|raconte|what is|who (is|was)|tell me about)",
 )
-_INTERROGATIVE = re.compile(r"\b(combien|quand|ou|pourquoi|comment|quel|quelle|quels|quelles|lequel|"
+_INTERROGATIVE = re.compile(r"\b(combien|quand|ou|pourquoi|comment|quel|quelle|quels|quelles|lequel|qui|"
                             r"est-ce que|how|when|where|why|which)\b")
 _NOISE = re.compile(r"\s*\((?:prononcé[^()]*|écouter|API[^()]*|\s*[,;]?\s*)\)")
 
@@ -134,14 +134,27 @@ def _fiche_answer(report: AnalysisReport, subject: Source) -> str | None:
     return best
 
 
+def direct_answer(report: AnalysisReport) -> tuple[str, int] | None:
+    """Réponse directe (fiche ou introduction datée) de l'article sujet, s'il y en a une."""
+    if question_kind(report.question) != "precise":
+        return None
+    return _direct_answer(report, main_source(report))
+
+
 def _direct_answer(report: AnalysisReport, subject: Source | None) -> tuple[str, int] | None:
     """Réponse directe dans l'article sujet : sa fiche (« Capitale : Canberra », « Population
     municipale : 519 127 hab. »), ou sa phrase d'introduction datée pour « quand »."""
     if subject is None:
         return None
-    line = _fiche_answer(report, subject)
-    if line:
-        return line, subject.id
+    # l'article sujet d'abord, puis ses homonymes nommés dans la question : pour « Qui a réalisé
+    # Titanic ? », c'est la fiche de « Titanic (film, 1997) » qui répond, pas celle du paquebot
+    asked = set(content_terms(strip_idioms(report.question)))
+    namesakes = [s for s in report.sources if s is not subject
+                 and (core := set(content_terms(re.sub(r"\s*\(.*\)", "", s.title)))) and core <= asked]
+    for candidate in [subject] + namesakes:
+        line = _fiche_answer(report, candidate)
+        if line:
+            return line, candidate.id
     if WHEN_RE.search(strip_idioms(report.question)):
         lead = lead_sentences(subject)
         if lead and DATE_RE.search(lead[0]):

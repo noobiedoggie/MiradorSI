@@ -57,7 +57,9 @@ _WORKS = (r"film|téléfilm|album|chanson|single|roman|série|feuilleton|jeu vid
 # Œuvre ou page d'homonymie : « Thriller (album) » dans le titre, « … est un film » dans la définition
 _WORK_TITLE = re.compile(rf"\((?:{_WORKS}|homonymie|disambiguation)\b[^)]*\)", re.I)
 _WORK_LEAD = re.compile(rf"\b(?:est|is) (?:une?|an?) (?:\w+ ){{0,2}}(?:{_WORKS})\b", re.I)
-_WORK_QUESTION = re.compile(rf"\b({_WORKS}|films?|livres?|œuvres?|artistes?|chanteu\w+|acteur|actrice)\b", re.I)
+_WORK_QUESTION = re.compile(rf"\b({_WORKS}|films?|livres?|œuvres?|artistes?|chanteu\w+|acteur|actrice|écrit\w*|"
+                            rf"auteur|réalis\w*|chant\w*|compos\w*|joué\w*|sorti\w*|publi\w*|lu|lire|vu|voir)\b",
+                            re.I)
 
 
 def is_off_topic_work(title: str, lead: str, question: str) -> bool:
@@ -65,6 +67,9 @@ def is_off_topic_work(title: str, lead: str, question: str) -> bool:
     d'œuvre. Le titre et la phrase de définition comptent, pas les bandeaux « voir aussi »."""
     if _WORK_QUESTION.search(question):
         return False
+    core = set(content_terms(re.sub(r"\s*\(.*\)", "", title)))
+    if core and core <= set(content_terms(question)) and not _WORK_TITLE.search(title):
+        return False  # « Les Misérables » quand on demande « Les Misérables » : c'est le sujet
     lead = re.sub(r"^.*?\b(homonymes?|homonymie|Cet article concerne|Pour (?:le|la|les|l')\b)[^.]*\.\s*", "", lead)
     return bool(_WORK_TITLE.search(title) or _WORK_LEAD.search(lead[:200]))
 
