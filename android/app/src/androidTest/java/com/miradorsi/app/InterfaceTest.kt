@@ -39,8 +39,7 @@ class InterfaceTest {
         attendreTexte("hors ligne")  // bandeau : le modèle embarqué est chargé
         regle.onNodeWithText("mirador").assertIsDisplayed()
         regle.onNodeWithContentDescription("À propos").assertIsDisplayed()
-        regle.onNodeWithContentDescription("Nouvelle conversation").assertIsDisplayed()
-        regle.onNodeWithContentDescription("Bibliothèque").assertIsDisplayed()
+        regle.onNodeWithContentDescription("Mirador SI").assertIsDisplayed()  // le mirador animé
         regle.onNodeWithText("Que souhaitez-vous analyser ?").assertIsDisplayed()
         regle.onNodeWithContentDescription("Réglages de l'analyse").assertIsDisplayed()
         regle.onNodeWithContentDescription("Analyse sur internet").assertIsDisplayed()

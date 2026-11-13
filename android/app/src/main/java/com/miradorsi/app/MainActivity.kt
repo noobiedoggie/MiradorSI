@@ -10,6 +10,23 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -93,8 +110,8 @@ private val Puce = Color(0xFF2A2F31)
 private val PuceActive = Color(0xFF131515)
 private val Sarcelle = Color(0xFF3D6B73)
 private val SarcelleClaire = Color(0xFF6FA3AC)
-private val Vert = Color(0xFF6FA584)
-private val FondIcone = Color(0xFF1E2724)
+private val Beige = Color(0xFFD8C4A2)
+private val FondBeige = Color(0xFF2B2722)
 private val Texte = Color(0xFFE9E9E6)
 private val Texte2 = Color(0xFFA0A6AA)
 private val Texte3 = Color(0xFF6E7579)
@@ -111,7 +128,6 @@ private sealed interface HorsLigne {
 
 private sealed interface Ecran {
     data object Accueil : Ecran
-    data object Bibliotheque : Ecran
     data class Discussion(val id: String) : Ecran
 }
 
@@ -248,14 +264,9 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
             Ecran.Accueil -> Accueil(
                 info = info, etat = etat, conversations = conversations,
                 onOuvrir = { ecran = Ecran.Discussion(it.id) }, onSupprimer = { supprimer(it) },
-                onAPropos = { aPropos = true }, onBibliotheque = { ecran = Ecran.Bibliotheque },
-                onNouvelle = { saisie = "" }, composer = { composer(null) },
+                onAPropos = { aPropos = true }, composer = { composer(null) },
                 horsLigne = horsLigne,
                 onHorsLigne = { if (horsLigne is HorsLigne.Absente || horsLigne is HorsLigne.Erreur) confirmerTelechargement = true },
-            )
-            Ecran.Bibliotheque -> Bibliotheque(
-                conversations = conversations, onRetour = { ecran = Ecran.Accueil },
-                onOuvrir = { ecran = Ecran.Discussion(it.id) }, onSupprimer = { supprimer(it) },
             )
             is Ecran.Discussion -> {
                 val c = conversations.firstOrNull { it.id == e.id }
@@ -291,30 +302,66 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
 @Composable
 private fun Accueil(
     info: EngineInfo?, etat: String, conversations: List<Conversation>,
-    onOuvrir: (Conversation) -> Unit, onSupprimer: (Conversation) -> Unit,
-    onAPropos: () -> Unit, onBibliotheque: () -> Unit, onNouvelle: () -> Unit,
+    onOuvrir: (Conversation) -> Unit, onSupprimer: (Conversation) -> Unit, onAPropos: () -> Unit,
     composer: @Composable () -> Unit, horsLigne: HorsLigne = HorsLigne.Inconnue, onHorsLigne: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            BoutonRond(Icons.Filled.Person, "À propos", onAPropos)
-            Spacer(Modifier.width(12.dp))
-            Text("mirador", color = Texte, fontSize = 30.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.weight(1f))
-            BoutonRond(MiradorIcons.NewChat, "Nouvelle conversation", onNouvelle)
+            BoutonRond(Icons.Filled.Person, "À propos", onAPropos, taille = 40)
             Spacer(Modifier.width(10.dp))
-            BoutonRond(MiradorIcons.Library, "Bibliothèque", onBibliotheque)
+            Text("mirador", color = Texte, fontSize = 22.sp, fontWeight = FontWeight.Medium)
         }
         Bandeau(etat, onAPropos)
         BandeauHorsLigne(horsLigne, onHorsLigne)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Image(MiradorIcons.tower(Sarcelle, Orange), contentDescription = info?.name ?: "Mirador SI",
-                modifier = Modifier.size(96.dp))
+            MiradorAnime(info?.name ?: "Mirador SI")
         }
-        conversations.take(5).forEach { LigneConversation(it, onOuvrir, onSupprimer) }
+        // toutes les conversations, avec défilement (il n'y a plus d'écran séparé)
+        Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
+            conversations.forEach { LigneConversation(it, onOuvrir, onSupprimer) }
+        }
         Spacer(Modifier.height(8.dp))
         composer()
+    }
+}
+
+/** Le mirador de l'accueil : un projecteur balaie le ciel depuis la tour, les fenêtres luisent. */
+@Composable
+private fun MiradorAnime(description: String) {
+    val transition = rememberInfiniteTransition(label = "mirador")
+    val angle by transition.animateFloat(
+        initialValue = -38f, targetValue = 38f, label = "projecteur",
+        animationSpec = infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+    )
+    val lueur by transition.animateFloat(
+        initialValue = 0.45f, targetValue = 1f, label = "fenetres",
+        animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+    )
+    val tour = remember { MiradorIcons.tower(Sarcelle, Orange) }
+    Box(Modifier.size(220.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.matchParentSize()) {
+            val icone = 96.dp.toPx()
+            val haut = (size.height - icone) / 2f
+            val source = Offset(size.width / 2f, haut + icone * 20f / 48f)  // les fenêtres de la tour
+            rotate(angle, pivot = source) {
+                val portee = size.height * 0.62f
+                val demi = portee * 0.30f
+                val faisceau = Path().apply {
+                    moveTo(source.x, source.y)
+                    lineTo(source.x - demi, source.y - portee)
+                    lineTo(source.x + demi, source.y - portee)
+                    close()
+                }
+                drawPath(faisceau, Brush.verticalGradient(
+                    listOf(Color.Transparent, Orange.copy(alpha = 0.10f + 0.12f * lueur)),
+                    startY = source.y - portee, endY = source.y,
+                ))
+            }
+            drawCircle(Brush.radialGradient(listOf(Orange.copy(alpha = 0.35f * lueur), Color.Transparent),
+                center = source, radius = icone * 0.32f), radius = icone * 0.32f, center = source)
+        }
+        Image(tour, contentDescription = description, modifier = Modifier.size(96.dp))
     }
 }
 
@@ -374,9 +421,9 @@ private fun LigneConversation(c: Conversation, onOuvrir: (Conversation) -> Unit,
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().clickable { onOuvrir(c) }.padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(42.dp).clip(CircleShape).background(FondIcone), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(42.dp).clip(CircleShape).background(FondBeige), contentAlignment = Alignment.Center) {
             Icon(if (c.mode == Mode.ANALYSE) Icons.Filled.Search else MiradorIcons.Laptop, null,
-                tint = Vert, modifier = Modifier.size(22.dp))
+                tint = Beige, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.width(16.dp))
         Text(c.title, color = Texte, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -433,9 +480,17 @@ private fun Composer(
                     }
                 }
                 Spacer(Modifier.width(10.dp))
-                Row(Modifier.clip(RoundedCornerShape(23.dp)).background(Puce).padding(3.dp)) {
-                    Segment(Icons.Filled.Search, "Analyse sur internet", mode == Mode.ANALYSE, !modeVerrouille) { onMode(Mode.ANALYSE) }
-                    Segment(MiradorIcons.Laptop, "Modèle local", mode == Mode.LOCAL, !modeVerrouille) { onMode(Mode.LOCAL) }
+                val decalage by animateDpAsState(
+                    if (mode == Mode.ANALYSE) 0.dp else 50.dp, label = "pastille",
+                    animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow),
+                )
+                Box(Modifier.clip(RoundedCornerShape(23.dp)).background(Puce).padding(3.dp)) {
+                    Box(Modifier.offset(x = decalage).size(width = 50.dp, height = 40.dp)
+                        .clip(RoundedCornerShape(20.dp)).background(PuceActive))
+                    Row {
+                        Segment(Icons.Filled.Search, "Analyse sur internet", mode == Mode.ANALYSE, !modeVerrouille) { onMode(Mode.ANALYSE) }
+                        Segment(MiradorIcons.Laptop, "Modèle local", mode == Mode.LOCAL, !modeVerrouille) { onMode(Mode.LOCAL) }
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 BoutonRond(MiradorIcons.Mic, "Dicter", onDicter, taille = 46)
@@ -458,13 +513,13 @@ private fun Composer(
 
 @Composable
 private fun Segment(icone: ImageVector, description: String, actif: Boolean, modifiable: Boolean, onClick: () -> Unit) {
+    val teinte by animateColorAsState(if (actif) Texte else Texte2, label = "icone")
     Box(
         Modifier.size(width = 50.dp, height = 40.dp).clip(RoundedCornerShape(20.dp))
-            .background(if (actif) PuceActive else Color.Transparent)
             .clickable(enabled = modifiable, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icone, description, tint = if (actif) Texte else Texte2, modifier = Modifier.size(22.dp))
+        Icon(icone, description, tint = teinte, modifier = Modifier.size(22.dp))
     }
 }
 
@@ -591,28 +646,7 @@ private fun EnCours(mode: Mode) {
     }
 }
 
-// ------------------------------------------------------------------ bibliothèque et à propos
-@Composable
-private fun Bibliotheque(
-    conversations: List<Conversation>, onRetour: () -> Unit,
-    onOuvrir: (Conversation) -> Unit, onSupprimer: (Conversation) -> Unit,
-) {
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            androidx.compose.material3.IconButton(onClick = onRetour) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour", tint = Texte)
-            }
-            Text("Bibliothèque", color = Texte, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-        }
-        if (conversations.isEmpty()) {
-            Text("Aucune conversation pour l'instant.", color = Texte2, modifier = Modifier.padding(24.dp))
-        }
-        LazyColumn(Modifier.weight(1f)) {
-            items(conversations) { LigneConversation(it, onOuvrir, onSupprimer) }
-        }
-    }
-}
-
+// ------------------------------------------------------------------ à propos
 @Composable
 private fun APropos(info: EngineInfo?, onFermer: () -> Unit) {
     AlertDialog(
