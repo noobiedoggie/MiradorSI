@@ -198,7 +198,8 @@ def compose_answer(report: AnalysisReport, max_points: int = 4, offline: bool = 
             sentence, sid = direct
             source = report.source(sid) or source  # le contexte vient alors de l'article sujet
             lead = lead_sentences(source)
-            top =[f for f in top[:1] if not _similar(f.text, sentence)]
+            # la fiche répond : on ne la complète que par une phrase du même article
+            top = [f for f in top[:1] if f.source_id == sid and not _similar(f.text, sentence)]
             paragraphs.append(" ".join([f"{_clean(sentence)} {_cite([sid])}"] +
                                        [f"{_clean(f.text)} {_cite(f.citations)}" for f in top]))
             used.append(sentence)
