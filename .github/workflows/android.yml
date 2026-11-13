@@ -92,7 +92,36 @@ jobs:
           api-level: 30
           arch: x86_64
           disable-animations: true
-          script: gradle -p android connectedDebugAndroidTest --stacktrace
+          script: |
+            gradle -p android connectedDebugAndroidTest --stacktrace
+            gradle -p android installDebug
+            adb shell am start -n com.miradorsi.app/.MainActivity
+            sleep 20
+            adb exec-out screencap -p > capture-accueil.png
+
+      - name: Capture d'écran de l'accueil
+        if: always()
+        run: |
+          if [ -f capture-accueil.png ]; then
+            pip install --quiet pillow
+            python3 - <<'PY'
+          import base64, io
+          from PIL import Image
+          image = Image.open("capture-accueil.png").convert("RGB")
+          image.thumbnail((360, 800))
+          tampon = io.BytesIO()
+          image.save(tampon, "JPEG", quality=60)
+          print("CAPTURE_JPEG_BASE64:" + base64.b64encode(tampon.getvalue()).decode())
+          PY
+          fi
+
+      - name: Publier la capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-accueil
+          path: capture-accueil.png
+          if-no-files-found: ignore
 
       - name: Résumé des tests
         if: always()
