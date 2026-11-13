@@ -94,6 +94,23 @@ jobs:
           disable-animations: true
           script: gradle -p android connectedDebugAndroidTest --stacktrace
 
+      - name: Résumé des tests
+        if: always()
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, xml.etree.ElementTree as ET
+          fichiers = glob.glob("android/app/build/outputs/androidTest-results/connected/**/*.xml", recursive=True)
+          total = echecs = 0
+          print("### Tests Mirador SI sur émulateur Android\n")
+          for f in fichiers:
+              for cas in ET.parse(f).getroot().iter("testcase"):
+                  total += 1
+                  rate = cas.find("failure") is not None or cas.find("error") is not None
+                  echecs += rate
+                  print(f"- {'❌' if rate else '✅'} {cas.get('name')} ({float(cas.get('time', 0)):.1f} s)")
+          print(f"\n**{total - echecs}/{total} tests réussis**")
+          PY
+
       - name: Rapport des tests
         if: always()
         uses: actions/upload-artifact@v4
