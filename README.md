@@ -161,6 +161,22 @@ Garanties vérifiées par les tests :
 Le Transformer de la v0.1 reste disponible : `arch = "transformer"` dans `config/mirador.toml`
 ou `mirador train --arch transformer`.
 
+### v0.4 : 2,5 fois plus grand, corpus quadruplé
+
+| | v0.3 | **v0.4** |
+|---|---|---|
+| Paramètres | 4,3 M (d=384) | **10,7 M** (d=640, attention locale de 128 tokens) |
+| Corpus d'entraînement | 474 articles, 5,2 M tokens | **2 825 articles, 21,4 M tokens** (75 M caractères) |
+| Entraînement | 4 000 étapes (16 M tokens vus) | **9 000 étapes** (37 M tokens vus), ~11 h sur CPU |
+| **Bits par caractère** sur 196 articles inédits pour les deux ↓ | 1,662 | **1,448 (−13 %)** |
+| Fichier int8 (même score que la version complète) | 4,0 Mo | 9,9 Mo |
+
+L'entraînement a survécu à plusieurs redémarrages de la machine grâce aux points de reprise
+(`checkpoints/reprise.npz`, toutes les 50 étapes). C'est ce modèle qui est embarqué dans
+l'application Android. Il écrit un français plus juste, mais à cette taille **les faits qu'il
+invente restent faux** : les réponses de Mirador SI viennent des sources (internet ou bibliothèque
+hors ligne), pas de sa mémoire.
+
 ### v0.3 : un modèle plus puissant, toujours compact
 
 | | v0.2 | **v0.3** |
@@ -320,7 +336,7 @@ Garde-fous :
 
 ## Limites actuelles, en toute franchise
 
-- **Le réseau de neurones reste petit (4,3 M de paramètres) et a lu 5,2 M de tokens.** Il connaît
+- **Le réseau de neurones reste petit (10,7 M de paramètres) et a lu 21 M de tokens.** Il connaît
   son identité et écrit un français plausible mot à mot, mais il ne « raisonne » pas et ne sait
   pas répondre à une question de culture générale. Un grand modèle a des milliards de paramètres
   et lit des milliers de milliards de tokens. Pour progresser : plus d'articles

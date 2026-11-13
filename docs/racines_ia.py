@@ -39,12 +39,12 @@ MODELES = [
 # restent près du centre (comme un vrai système racinaire) : aucune étiquette n'est traversée.
 # Ton modèle : mets à jour ces valeurs à chaque nouvelle version entraînée.
 MIRADOR_SI = {
-    "nom": "Mirador SI v0.3 · Vigie",
-    "params": 4.26e6,
+    "nom": "Mirador SI v0.4 · Vigie",
+    "params": 10.68e6,
     "x": 1290,
-    "lignes": ["4,3 M de paramètres · {taille} compressé", "créé de zéro · s'entraîne et tourne sur un simple PC"],
-    "taille": "4,0 Mo",
-    "precedent": ("v0.2", 2.47e6),   # ancienne version, repérée sur la même racine
+    "lignes": ["10,7 M de paramètres · {taille} compressé", "créé de zéro · s'entraîne et tourne sur un simple PC"],
+    "taille": "9,9 Mo",
+    "precedent": ("v0.3", 4.26e6),   # ancienne version, repérée sur la même racine
 }
 POINTE = [("Claude", 820), ("GPT", 950), ("Gemini", 1080)]   # taille non publiée
 POINTE_EXP = 12.3         # sert seulement à doser l'épaisseur des racines
