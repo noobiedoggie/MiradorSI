@@ -67,8 +67,11 @@ def generate(model, prompt_ids: list[int], max_new_tokens: int = 200, temperatur
     stop_ids = stop_ids or set()
     state = model.init_state()
     logits = None
-    for token in prompt_ids:  # lecture du prompt (« prefill »)
-        logits = model.step(int(token), state)
+    if hasattr(model, "prefill") and len(prompt_ids) > 1:  # lecture du prompt en une passe
+        logits = model.prefill(prompt_ids, state)
+    else:
+        for token in prompt_ids:  # lecture du prompt jeton par jeton
+            logits = model.step(int(token), state)
     if logits is None:
         raise ValueError("prompt vide")
     out: list[int] = []

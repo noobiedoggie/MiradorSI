@@ -220,3 +220,25 @@ def test_interrupted_training_resumes_where_it_stopped(tmp_path, monkeypatch):
     expected = cosine_lr(2, 6, cfg.training.learning_rate, 2, cfg.training.min_lr_ratio)
     assert f"lr {expected:.2e}" in step3                  # le planning continue, il ne redémarre pas
     assert (tmp_path / "ckpt" / "reprise-optim.npz").exists()
+
+
+def test_prefill_matches_step_by_step():
+    """Lire un texte d'un coup donne exactement l'état de la lecture jeton par jeton,
+    y compris au-delà de la fenêtre d'attention et en plusieurs morceaux."""
+    import numpy as np
+
+    from miradorsi.model.vigie import Vigie, VigieConfig
+
+    model = Vigie(VigieConfig(vocab_size=300, d_model=64, d_embed=32, n_heads=4, n_kv_heads=2, window=16,
+                              context_length=128, pattern="RA", n_loops=2))
+    tokens = np.random.default_rng(0).integers(0, 300, 70).tolist()
+    one = model.init_state()
+    for token in tokens[:-1]:
+        model.step(token, one)
+    expected = model.step(tokens[-1], one)
+    whole, parts = model.init_state(), model.init_state()
+    assert np.allclose(model.prefill(tokens, whole), expected, atol=1e-6)
+    model.prefill(tokens[:30], parts)
+    assert np.allclose(model.prefill(tokens[30:], parts), expected, atol=1e-6)
+    for token in (3, 4, 5):  # la suite de la génération est identique
+        assert np.allclose(model.step(token, whole), model.step(token, one), atol=1e-6)

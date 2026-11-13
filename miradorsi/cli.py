@@ -232,6 +232,33 @@ def cmd_library(cfg, args) -> int:
     return 0
 
 
+def cmd_reader(cfg, args) -> int:
+    """Cerveau lecteur : fabriquer les exercices, entraîner, évaluer, interroger."""
+    from .model import reader
+
+    data_dir, out_dir = Path(args.donnees), Path(args.sortie)
+    if args.action == "exercices":
+        from .library import Library
+
+        stats = reader.build_dataset(Library(args.bibliotheque or cfg.path("library")), data_dir,
+                                     max_articles=args.articles)
+        print(f"Exercices : {stats}")
+    elif args.action == "entrainer":
+        stats = reader.train_reader(args.base or cfg.path("checkpoints"), data_dir, out_dir, steps=args.etapes,
+                                    batch_size=args.lot)
+        print(f"Lecteur entraîné : {stats}")
+    elif args.action == "evaluer":
+        from .model.checkpoint import load_model
+        from .model.tokenizer import BPETokenizer
+
+        model, _ = load_model(out_dir / "model.npz")
+        tokenizer = BPETokenizer.load(out_dir / "tokenizer.json")
+        examples = reader.load_examples(data_dir / "val.jsonl")
+        print(json.dumps(reader.evaluate_reader(model, tokenizer, examples, limit=args.exemples),
+                         ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_lexicon(cfg, args) -> int:
     from .analysis.lexicon import build_idf, save_lexicon
     from .model.train import load_corpus_documents
@@ -318,6 +345,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sortie", help="fichier de sortie (par défaut : [paths].library)")
     p.add_argument("--question", nargs="+", help="interroger la bibliothèque au lieu de la construire")
     p.set_defaults(func=cmd_library)
+
+    p = sub.add_parser("lecteur", help="cerveau lecteur : répondre à partir de sources")
+    p.add_argument("action", choices=["exercices", "entrainer", "evaluer"])
+    p.add_argument("--bibliotheque", help="bibliothèque source des exercices")
+    p.add_argument("--articles", type=int, default=40_000, help="articles utilisés (les plus consultés)")
+    p.add_argument("--donnees", default="data/lecteur", help="dossier des exercices")
+    p.add_argument("--base", help="modèle de départ (par défaut : [paths].checkpoints)")
+    p.add_argument("--sortie", default="checkpoints-lecteur", help="dossier du lecteur entraîné")
+    p.add_argument("--etapes", type=int, default=2000)
+    p.add_argument("--lot", type=int, default=16)
+    p.add_argument("--exemples", type=int, default=100, help="exercices de validation évalués")
+    p.set_defaults(func=cmd_reader)
     return parser
 
 

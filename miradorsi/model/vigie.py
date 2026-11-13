@@ -201,6 +201,10 @@ class Vigie(Module):
     def step(self, token: int, state: dict) -> np.ndarray:
         return state["runtime"].step(token, state)
 
+    def prefill(self, tokens, state: dict) -> np.ndarray:
+        """Lit tout un texte d'un coup (même état que `step` jeton par jeton, bien plus vite)."""
+        return state["runtime"].prefill(tokens, state)
+
     def generate(self, prompt_ids: list[int], max_new_tokens: int = 200, temperature: float = 0.8,
                  top_k: int | None = 40, top_p: float | None = 0.95, stop_ids: set[int] | None = None,
                  rng: np.random.Generator | None = None, **options) -> list[int]:
@@ -259,6 +263,78 @@ class VigieRuntime:
 
     def _norm(self, x: np.ndarray, weight: np.ndarray) -> np.ndarray:
         return x * (weight / np.sqrt(np.dot(x, x) / x.size + self.cfg.norm_eps))
+
+    def _norm_rows(self, x: np.ndarray, weight: np.ndarray) -> np.ndarray:
+        return x * (weight / np.sqrt((x * x).mean(axis=1, keepdims=True) + self.cfg.norm_eps))
+
+    def prefill(self, tokens, state: dict) -> np.ndarray:
+        """Lit `tokens` en une passe matricielle et met l'état à jour exactement comme autant
+        d'appels à `step` ; renvoie les logits du dernier jeton. La récurrence reste une boucle
+        (un produit par jeton sur un vecteur), tout le reste est calculé en bloc."""
+        cfg, d, hd = self.cfg, self.cfg.d_model, self.head_dim
+        tokens = np.asarray(tokens, dtype=np.int64)
+        T = len(tokens)
+        if T == 0:
+            raise ValueError("prefill : texte vide")
+        x = self.embed[tokens]
+        if self.proj_in is not None:
+            x = x @ self.proj_in
+        position = state["position"]
+        if self.has_attention:
+            positions = position + np.arange(T)
+            angles = positions[:, None] * self.inv_freq[None, :]
+            angles = np.concatenate([angles, angles], 1)
+            cos, sin = np.cos(angles).astype(self.dtype), np.sin(angles).astype(self.dtype)
+            half, kv, window = hd // 2, cfg.n_kv_heads * hd, cfg.window
+            past = min(position, window)
+            past_pos = np.arange(position - past, position)
+            all_pos = np.concatenate([past_pos, positions])
+            visible = (all_pos[None, :] <= positions[:, None]) & (all_pos[None, :] > positions[:, None] - window)
+
+            def rotate(t, c, s_):  # t : (T, …, hd)
+                return t * c + np.concatenate([-t[..., half:], t[..., :half]], -1) * s_
+        for (w, mix_norm, mlp_norm), st in zip(self.layers, state["layers"]):
+            z = self._norm_rows(x, mix_norm) @ w["w_in"]
+            if w["kind"] == "R":
+                z += w["b_in"]
+                u, a, g = z[:, :d], S.sigmoid(z[:, d:2 * d]), z[:, 2 * d:]
+                buf = st["conv"]                                   # buf[0] = entrée précédente
+                history = np.concatenate([buf[::-1], u], 0)        # du plus ancien au plus récent
+                k = len(buf)
+                v = w["conv_now"] * u + w["conv_b"]
+                for j in range(k):                                 # conv_past[j] × u(t-1-j)
+                    v = v + w["conv_past"][j] * history[k - 1 - j: k - 1 - j + T]
+                if k:
+                    st["conv"] = history[::-1][:k].copy()
+                h = st["h"]
+                hs = np.empty_like(v)
+                for t in range(T):
+                    h = a[t] * h + (1.0 - a[t]) * v[t]
+                    hs[t] = h
+                st["h"] = h
+                x = x + (hs * S.gelu(g)) @ w["w_out"]
+            else:
+                q = rotate(z[:, :d].reshape(T, cfg.n_kv_heads, -1, hd), cos[:, None, None, :], sin[:, None, None, :])
+                kn = rotate(z[:, d:d + kv].reshape(T, cfg.n_kv_heads, hd), cos[:, None, :], sin[:, None, :])
+                vn = z[:, d + kv:].reshape(T, cfg.n_kv_heads, hd)
+                slots = past_pos % window
+                keys = np.concatenate([st["k"][slots], kn], 0)      # (N, kv, hd)
+                values = np.concatenate([st["v"][slots], vn], 0)
+                scores = np.einsum("tkgh,nkh->kgtn", q, keys) * (1.0 / np.sqrt(hd))
+                scores = np.where(visible[None, None], scores, -np.inf)
+                y = np.einsum("kgtn,nkh->tkgh", S.softmax(scores), values)
+                keep = np.arange(max(0, T - window), T)            # le tampon garde les derniers
+                st["k"][positions[keep] % window] = kn[keep]
+                st["v"][positions[keep] % window] = vn[keep]
+                x = x + y.reshape(T, -1) @ w["w_out"]
+            gu = self._norm_rows(x, mlp_norm) @ w["w_mlp"]
+            hidden = w["hidden"]
+            x = x + (S.silu(gu[:, :hidden]) * gu[:, hidden:]) @ w["w_down"]
+        state["position"] = position + T
+        last = self._norm(x[-1], self.final_norm)
+        if self.proj_out is not None:
+            last = last @ self.proj_out
+        return last @ self.embed_t
 
     def step(self, token: int, state: dict) -> np.ndarray:
         cfg, d, hd = self.cfg, self.cfg.d_model, self.head_dim
