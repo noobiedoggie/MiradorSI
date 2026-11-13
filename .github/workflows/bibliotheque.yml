@@ -13,6 +13,7 @@ on:
   push:
     paths:
       - ".github/workflows/bibliotheque.yml"
+      - "miradorsi/library.py"   # nettoyage ou format changés : on reconstruit
 
 jobs:
   construire:

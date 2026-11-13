@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import re
 
-from .researcher import (DATE_RE, QUANTITATIVE_RE, WHEN_RE, AnalysisReport, Finding, Source,
-                         is_off_topic_work)
+from .researcher import DATE_RE, WHEN_RE, AnalysisReport, Finding, Source, is_off_topic_work
 from .text import content_terms, normalize, split_sentences, strip_idioms
 
 _DEFINITION = re.compile(
@@ -27,6 +26,8 @@ _NOISE = re.compile(r"\s*\((?:prononcé[^()]*|écouter|API[^()]*|\s*[,;]?\s*)\)"
 def question_kind(question: str) -> str:
     """« definition » (de quoi s'agit-il ?) ou « precise » (un fait particulier)."""
     q = normalize(question).replace("’", "'").strip(" ?!.")
+    if re.match(r"(qui|quel|quelle) (est|etait|sont|etaient) (le|la|les|l') ", q):
+        return "precise"  # « qui est le président de la France ? » : une personne, pas une définition
     if _DEFINITION.match(q):
         return "definition"
     if not _INTERROGATIVE.search(q) and len(content_terms(question)) <= 4:
@@ -87,25 +88,61 @@ def lead_sentences(source: Source, max_chars: int = 420) -> list[str]:
     return out
 
 
+# Mot de la question → rubriques de la fiche (infobox) qui y répondent
+_LABEL_HINTS = {
+    "ecrit": "Auteur", "ecrivain": "Auteur", "auteur": "Auteur", "redige": "Auteur",
+    "realise": "Réalisation", "realisateur": "Réalisation", "tourne": "Réalisation",
+    "fonde": "Fondation|Fondateur|Fondateurs", "fondateur": "Fondateur|Fondateurs", "fondation": "Fondation",
+    "ne": "Naissance", "nee": "Naissance", "naissance": "Naissance", "mort": "Décès", "morte": "Décès",
+    "decede": "Décès", "decedee": "Décès", "deces": "Décès", "meurt": "Décès", "capitale": "Capitale",
+    "langue": "Langues officielles|Langue officielle|Langue", "parle": "Langues officielles|Langue officielle|Langue",
+    "monnaie": "Monnaie", "president": "Président|Présidente|Chef de l'État", "ministre": "Premier ministre",
+    "maire": "Maire", "habitant": "Population municipale|Population totale|Population",
+    "population": "Population municipale|Population totale|Population", "superficie": "Superficie|Superficie totale",
+    "hauteur": "Hauteur", "haut": "Hauteur|Altitude|Point culminant", "altitude": "Altitude|Point culminant",
+    "architecte": "Architecte", "construit": "Construction|Architecte", "construction": "Construction",
+    "pere": "Père", "mere": "Mère", "epouse": "Conjoint", "mari": "Conjoint", "conjoint": "Conjoint",
+    "enfant": "Enfants", "nationalite": "Nationalité", "religion": "Religion", "siege": "Siège",
+    "club": "Club actuel", "poste": "Poste", "parti": "Parti politique", "editeur": "Éditeur",
+    "publie": "Date de parution|Éditeur", "devise": "Devise", "hymne": "Hymne national", "longueur": "Longueur",
+    "profondeur": "Profondeur", "diametre": "Diamètre", "masse": "Masse", "distance": "Distance",
+    "temperature": "Température", "densite": "Densité", "gentile": "Gentilé", "sort": "Date de sortie",
+    "sortie": "Date de sortie", "inaugure": "Inauguration", "decouvert": "Découvreur|Date de découverte",
+    "quand": "Date|Naissance|Fondation|Inauguration|Date de sortie|Date de parution|Construction",
+}
+
+
+def _fiche_answer(report: AnalysisReport, subject: Source) -> str | None:
+    """La ligne de fiche qui répond : « Australie — Capitale : Canberra. » pour la capitale."""
+    words = set(re.sub(r"[^a-z]+", " ", normalize(strip_idioms(report.question))).split())
+    words -= set(re.sub(r"[^a-z]+", " ", normalize(subject.title)).split())  # « Marie » Curie ≠ marié
+    wanted_terms = set(content_terms(strip_idioms(report.question))) - set(content_terms(subject.title))
+    hinted: dict[str, int] = {}
+    for word in words:
+        for stem in {word, word.rstrip("s")}:
+            for label in filter(None, _LABEL_HINTS.get(stem, "").split("|")):
+                hinted[label] = max(hinted.get(label, 0), 1 if stem == "quand" else 2)
+    prefix = f"{subject.title} — "
+    best, best_score = None, 0
+    for line in subject.text.split("\n"):
+        if not line.startswith(prefix) or " : " not in line:
+            continue
+        label = line[len(prefix):].split(" : ", 1)[0]
+        score = hinted.get(label, 0) + len(set(content_terms(label)) & wanted_terms)
+        if score > best_score:
+            best, best_score = line, score
+    return best
+
+
 def _direct_answer(report: AnalysisReport, subject: Source | None) -> tuple[str, int] | None:
-    """Réponse directe dans l'article sujet : sa fiche (« Population municipale : 519 127 hab. »)
-    pour une question chiffrée, sa phrase d'introduction datée pour « quand »."""
+    """Réponse directe dans l'article sujet : sa fiche (« Capitale : Canberra », « Population
+    municipale : 519 127 hab. »), ou sa phrase d'introduction datée pour « quand »."""
     if subject is None:
         return None
-    question = strip_idioms(report.question)
-    if QUANTITATIVE_RE.search(question):
-        wanted = set(content_terms(question)) - set(content_terms(subject.title))
-        prefix = f"{subject.title} — "
-        best, best_score = None, 0
-        for line in subject.text.split("\n"):
-            if line.startswith(prefix) and " : " in line and any(c.isdigit() for c in line):
-                label = set(content_terms(line[len(prefix):].split(" : ", 1)[0]))
-                score = len(label & wanted)
-                if score > best_score:
-                    best, best_score = line, score
-        if best:
-            return best, subject.id
-    if WHEN_RE.search(question):
+    line = _fiche_answer(report, subject)
+    if line:
+        return line, subject.id
+    if WHEN_RE.search(strip_idioms(report.question)):
         lead = lead_sentences(subject)
         if lead and DATE_RE.search(lead[0]):
             return lead[0], subject.id
@@ -125,16 +162,25 @@ def compose_answer(report: AnalysisReport, max_points: int = 4, offline: bool = 
     paragraphs: list[str] = []
 
     kind = question_kind(report.question)
+    asked = set(content_terms(strip_idioms(report.question)))
+
+    def on_subject(source_id: int) -> bool:  # l'article parle-t-il de ce qui est demandé ?
+        src = report.source(source_id)
+        return bool(src and asked & set(content_terms(src.title)))
+
+    # l'ouverture vient d'abord des articles qui portent sur le sujet (« Couleur du ciel » plutôt
+    # que « Drapeau des Pays-Bas » pour « pourquoi le ciel est bleu ? »)
+    opening = sorted(ranked, key=lambda f: not on_subject(f.source_id))
     source = main_source(report)
-    if kind == "precise" and ranked:  # le contexte doit venir de l'article qui répond
-        source = report.source(ranked[0].source_id) or source
+    if kind == "precise" and opening:  # le contexte doit venir de l'article qui répond
+        source = report.source(opening[0].source_id) or source
     lead = lead_sentences(source) if source else []
     if kind == "definition" and lead:
         paragraphs.append(" ".join(lead) + f" {_cite([source.id])}")
         used += lead
     else:
         direct = _direct_answer(report, main_source(report))
-        top = [f for f in ranked[:2] if f.relevance >= 0.8 * ranked[0].relevance]
+        top = [f for f in opening[:2] if f.relevance >= 0.8 * opening[0].relevance]
         if direct:
             sentence, sid = direct
             source = report.source(sid) or source  # le contexte vient alors de l'article sujet
@@ -146,7 +192,7 @@ def compose_answer(report: AnalysisReport, max_points: int = 4, offline: bool = 
         else:
             paragraphs.append(" ".join(f"{_clean(f.text)} {_cite(f.citations)}" for f in top))
         used += [f.text for f in top]
-        if lead and not any(_similar(lead[0], u) for u in used):
+        if lead and source and on_subject(source.id) and not any(_similar(lead[0], u) for u in used):
             paragraphs.append(f"Pour situer : {lead[0]} {_cite([source.id])}")
             used.append(lead[0])
 

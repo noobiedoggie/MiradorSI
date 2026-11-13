@@ -101,3 +101,21 @@ def test_build_from_cirrus_keeps_the_most_popular(tmp_path):
     assert stats["articles"] == 2
     assert [library.article(i)[0] for i in range(2)] == ["Paris", "Lune"]  # par popularité, sans homonymie
     assert library.find("ville lumière") == library.find("Paris")
+
+
+def test_titles_are_found_without_their_article(tmp_path):
+    builder = LibraryBuilder(tmp_path / "t.db", "fr")
+    builder.add("Les Misérables", "Les Misérables est un roman de Victor Hugo publié en 1862.\n"
+                                  "Les Misérables — Auteur : Victor Hugo.", 1e-5)
+    builder.add("Melancholia (Victor Hugo)", "Melancholia est un poème de Victor Hugo sur les misérables.", 1e-7)
+    builder.close()
+    library = Library(tmp_path / "t.db")
+    assert library.search("Qui a écrit Les Misérables ?")[0].title == "Les Misérables"
+    assert clean_opening_text("Les Misérables", "Les Misérables est un roman de Victor Hugo.") == \
+        "Les Misérables est un roman de Victor Hugo."
+    assert clean_opening_text("Révolution française", "Pour celle de 1848, voir Révolution française de 1848. "
+                              "Révolution française Prise de la Bastille le 14 juillet 1789. La Révolution "
+                              "française (1789-1799) est une période de bouleversements.") == \
+        "La Révolution française (1789-1799) est une période de bouleversements."
+    assert parse_fiche("Australie", ["Premier ministre Anthony Albanese Capitale Canberra 35° 15′ S, 149° 08′ E"]) \
+        == ["Australie — Premier ministre : Anthony Albanese.", "Australie — Capitale : Canberra."]

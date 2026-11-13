@@ -16,6 +16,8 @@ def test_question_kind():
     assert question_kind("Napoléon") == "definition"
     assert question_kind("Quelle est la population de Lyon ?") == "precise"
     assert question_kind("Pourquoi le ciel est bleu ?") == "precise"
+    assert question_kind("Qui est le président de la France ?") == "precise"
+    assert question_kind("Qui est Kylian Mbappé ?") == "definition"
 
 
 def test_definition_answer_starts_with_the_article_lead():
@@ -48,3 +50,16 @@ def test_precise_answer_uses_the_fiche_of_the_subject():
     text = compose_answer(report)
     assert text.startswith("Population municipale (Lyon) : 519 127 hab. (2023). [2]")
     assert "Pour situer : Lyon est une commune du sud-est de la France. [2]" in text
+
+
+def test_fiche_answers_the_precise_question():
+    report = AnalysisReport("Quelle est la capitale de l'Australie ?", "fr", 1, "Mirador SI", "now", duration_seconds=1)
+    report.sources = [
+        _source(1, "Darwin (Australie)", "Darwin est la capitale du Territoire du Nord en Australie."),
+        _source(2, "Australie", "L'Australie est un pays d'Océanie.\nAustralie — Premier ministre : Anthony Albanese.\n"
+                                "Australie — Capitale : Canberra."),
+    ]
+    report.findings = [Finding("Darwin est la capitale du Territoire du Nord en Australie.", 1, [], 0.9, 0.7)]
+    assert compose_answer(report).startswith("Capitale (Australie) : Canberra. [2]")
+    report.question = "Qui est le Premier ministre de l'Australie ?"
+    assert compose_answer(report).startswith("Premier ministre (Australie) : Anthony Albanese. [2]")

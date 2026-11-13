@@ -38,6 +38,9 @@ _K1, _B = 1.2, 0.75
 _TITLE_WEIGHT = 3  # un mot du titre compte comme trois mots du texte
 
 
+_LEADING_ARTICLE = re.compile(r"^(?:le|la|les|l|un|une|des|the) ")
+
+
 def title_key(title: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9]+", " ", normalize(title)).split())
 
@@ -89,7 +92,11 @@ class LibraryBuilder:
         self.db.execute("INSERT INTO docs VALUES (?, ?, ?)",
                         (doc_id, title, zlib.compress(text.encode("utf-8"), 9)))
         for name in (title, *aliases):
-            self._titles.setdefault(title_key(name), doc_id)  # le premier (le plus important) gagne
+            key = title_key(name)
+            self._titles.setdefault(key, doc_id)  # le premier (le plus important) gagne
+            bare = _LEADING_ARTICLE.sub("", key)
+            if bare and bare != key:
+                self._titles.setdefault(bare, doc_id)  # « miserables » trouve « Les Misérables »
         return doc_id
 
     def close(self, date: str = "") -> dict:
@@ -285,31 +292,48 @@ FICHE_LABELS = [
     "Éditeur", "Langue", "Âge", "Espérance de vie", "PIB nominal", "PIB (PPA)", "IDH", "Indicatif téléphonique",
 ]
 FICHE_LABELS += ["Père", "Mère", "Fratrie", "Formation", "Coordonnées", "Œuvres principales", "Mouvement",
-                 "Membre de", "Lieu de travail", "Sépulture", "Nom de naissance", "Nom de naissance"]
+                 "Membre de", "Lieu de travail", "Sépulture", "Nom de naissance", "Date de parution", "Illustrateur",
+                 "Nombre de pages", "Ingénieur", "Matériau", "Ouverture", "Commanditaire", "Surnom", "Surnoms",
+                 "Hymne national", "Devise", "Fête nationale", "Population totale (2024)", "Club actuel", "Poste",
+                 "Taille", "Équipe nationale", "Sport", "Discipline", "Influencé par", "A influencé", "Récompense",
+                 "Prix", "Langue originale", "Pays d'origine", "Producteur", "Scénario", "Musique", "Personnages",
+                 "Nature du pouvoir", "Régime politique", "Superficie totale", "Plus haut point"]
 # Intertitres de fiche : ils séparent les rubriques mais ne sont pas des informations
 _FICHE_SECTIONS = ["Démographie", "Géographie", "Administration", "Localisation", "Liens", "Biographie",
                    "Histoire", "Caractéristiques", "Identifiants", "Fonctions", "Fonction", "Signature",
-                   "Archives conservées par", "Blason", "Drapeau", "Économie", "Politique"]
+                   "Archives conservées par", "Blason", "Drapeau", "Économie", "Politique", "Chronologie",
+                   "Parlement", "Chambre haute", "Chambre basse", "Partie de", "Carrière", "Statistiques"]
 _FICHE_RE = re.compile(r"(?<![\w'])(" + "|".join(sorted(map(re.escape, set(FICHE_LABELS + _FICHE_SECTIONS)),
                                                          key=len, reverse=True)) + r")(?![\w'])")
 
 
+_HATNOTE = re.compile(r"^(?:Pour |Ne (?:pas|doit pas) |Cet article |Cette page |Article (?:principal|détaillé)|"
+                      r"Voir aussi|« [^»]{1,80} » redirige|Si ce bandeau|En pratique|Vous pouvez)")
+_DEFINITION_VERB = re.compile(r"\b(?:est|sont|était|étaient|fut|furent|désigne|désignent|né|née|nés|constitue|"
+                              r"représente|signifie|is|was|are)\b")
+
+
 def clean_opening_text(title: str, text: str, max_chars: int = 1600) -> str:
-    """Introduction lisible : sans bandeaux, sans le titre de la fiche répété, sans légende d'image."""
-    text = " ".join(_BANNERS.sub(" ", text or "").split())
-    if title and text.startswith(title + " "):
-        text = text[len(title) + 1:]  # « Antoine Meillet Antoine Meillet, né le… » : titre de la fiche
+    """Introduction lisible : sans bandeaux ni légendes d'images, à partir de la vraie première
+    phrase (« X est… »)."""
     from .analysis.text import split_sentences  # import local : module léger côté application
-    sentences = split_sentences(text)
+
+    text = " ".join(_BANNERS.sub(" ", text or "").split())
+    text = re.sub(r"\s*\bÉcouter\b", "", text)
+    if title and text.startswith(title + " "):
+        rest = text[len(title) + 1:]
+        if rest.startswith(title) or rest[:1].isupper():  # « Antoine Meillet Antoine Meillet, né… »
+            text = rest
+    sentences = [s for s in split_sentences(text) if not (_HATNOTE.match(s) and len(s) < 400)]
     wanted = set(content_terms(title))
-    # « ℝ³ est un espace vectoriel… » (légende d'image) avant « L'algèbre linéaire est… » : la
-    # vraie introduction commence à la première phrase qui parle du sujet
-    for i, sentence in enumerate(sentences[:4]):
-        if wanted & set(content_terms(sentence)):
-            sentences = sentences[i:]
-            break
+    # « Révolution française Prise de la Bastille… » (légende) avant « La Révolution française
+    # (1789-1799) est une période… » : on commence à la première phrase qui DÉFINIT le sujet
+    start = next((i for i, sentence in enumerate(sentences[:8])
+                  if wanted & set(content_terms(sentence)) and _DEFINITION_VERB.search(sentence)), None)
+    if start is None:
+        start = next((i for i, sentence in enumerate(sentences[:4]) if wanted & set(content_terms(sentence))), 0)
     out: list[str] = []
-    for sentence in sentences:
+    for sentence in sentences[start:]:
         if out and sum(len(s) + 1 for s in out) + len(sentence) > max_chars:
             break
         out.append(sentence)
@@ -327,6 +351,10 @@ def parse_fiche(title: str, auxiliary: list[str], max_lines: int = 14) -> list[s
             label = current.group(1)
             value = block[current.end(): following.start() if following else len(block)].strip(" :;,")
             value = " ".join(value.split())
+            value = re.sub(r"\s+([)\],.;])", r"\1", value).replace("( ", "(")
+            value = re.sub(r"\s*\bmodifier\b\s*$", "", value)
+            if label != "Coordonnées":
+                value = re.sub(r"\s*\d+°\s*\d+[′'].*$", "", value).strip()  # « Canberra 35° 15′ S… »
             if label in _FICHE_SECTIONS or not value or label in seen or len(value) > 160:
                 continue
             seen.add(label)

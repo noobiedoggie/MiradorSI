@@ -140,7 +140,7 @@ def chunk_words(text: str, size: int = 90, overlap: int = 20) -> list[str]:
     for sentence in sentences:
         n = len(sentence.split())
         if current and count + n > size:
-            chunks.append(" ".join(current))
+            chunks.append("\n".join(current))
             keep, kept = [], 0  # chevauchement : on garde les dernières phrases
             for s in reversed(current):
                 kept += len(s.split())
@@ -151,5 +151,5 @@ def chunk_words(text: str, size: int = 90, overlap: int = 20) -> list[str]:
         current.append(sentence)
         count += n
     if current:
-        chunks.append(" ".join(current))
+        chunks.append("\n".join(current))
     return chunks
