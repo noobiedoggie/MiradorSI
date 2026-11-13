@@ -15,6 +15,7 @@ from .analysis.text import content_terms, normalize, strip_idioms
 from .config import Config
 from .identity import Identity
 from .library import Library, LibraryFetcher, LibrarySearch, open_library
+from .reasoning import Facts, Reasoner, convert_tool, date_tool, resolve_follow_up
 from .model.brain import Brain
 from .web.http import WebClient, WebError
 from .web.search import Fetcher, SearchEngine
@@ -236,7 +237,7 @@ class MiradorAgent:
 
     def quick_reply(self, message: str) -> str | None:
         """Réponse sûre sans internet ni modèle : calcul, salutation, politesse, question sur moi."""
-        result = calculate(message)
+        result = calculate(message) or date_tool(message) or convert_tool(message)
         if result:
             return result
         if is_insult(message):
@@ -287,6 +288,10 @@ class MiradorAgent:
             start = write.group(1).strip()
             text = (start + self.brain.complete(start)).strip()
             return text + "\n\n(Texte inventé par mon modèle, sans vérification.)", None
+        message = resolve_follow_up(message, self.history)  # « Et sa capitale ? » → (Japon)
+        reasoned = self.reason(message, online=False)
+        if reasoned is not None:
+            return reasoned
         report = self.library_answer(message)
         if report is not None:
             return compose_answer(report, offline=True), report
@@ -296,6 +301,36 @@ class MiradorAgent:
             return ("Mon réseau de neurones n'est pas encore entraîné (lance `mirador train`). "
                     "Je peux déjà analyser n'importe quel sujet : /analyse <ta question>"), None
         return OFFLINE_LIMIT, None
+
+    def reason(self, question: str, online: bool) -> tuple[str, AnalysisReport] | None:
+        """Raisonnement en étapes (âges, comparaisons, questions en chaîne) à partir des fiches :
+        bibliothèque d'abord, Wikipédia en ligne ensuite. None si la question ne s'y prête pas."""
+        from .analysis import credibility
+        from .analysis.researcher import Source
+
+        reasoner = Reasoner(Facts(self.library, self.fetcher if online else None))
+        result = reasoner.answer(question)
+        if result is None:
+            return None
+        text, sources = result.text, list(result.sources)
+        if result.rewrite:  # dernière étape confiée à l'analyse : « Quelle est la capitale de Pologne ? »
+            sub = self.library_answer(result.rewrite)
+            if sub is None and online:
+                sub = self.analyzer.analyze(result.rewrite, 1)
+                sub = sub if sub.findings else None
+            if sub is None:
+                return None
+            offset = len(sub.sources)
+            steps = re.sub(r"\[(\d+)\]", lambda m: f"[{int(m.group(1)) + offset}]", text)
+            answer = compose_answer(sub, offline=not online).rsplit("\n\nD'après", 1)[0]
+            text = f"{answer}\n\n{steps}"
+            sources = [(s.title, s.url) for s in sub.sources] + sources
+        report = AnalysisReport(question, "fr", 1, self.identity.name, dt.datetime.now().isoformat(timespec="seconds"))
+        for i, (title, url) in enumerate(sources, 1):
+            report.sources.append(Source(i, url, title, "fr.wikipedia.org", "", question, "raisonnement",
+                                         credibility.assess(url, "fr.wikipedia.org")))
+        self.last_report = report
+        return text, report
 
     def library_answer(self, question: str) -> AnalysisReport | None:
         """Analyse dans la bibliothèque hors ligne ; None si elle est absente ou muette."""

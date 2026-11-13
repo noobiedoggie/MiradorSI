@@ -325,12 +325,14 @@ FICHE_LABELS += ["Père", "Mère", "Fratrie", "Formation", "Coordonnées", "Œuv
                  "Hymne national", "Devise", "Fête nationale", "Population totale (2024)", "Club actuel", "Poste",
                  "Taille", "Équipe nationale", "Sport", "Discipline", "Influencé par", "A influencé", "Récompense",
                  "Prix", "Langue originale", "Pays d'origine", "Producteur", "Scénario", "Musique", "Personnages",
-                 "Nature du pouvoir", "Régime politique", "Superficie totale", "Plus haut point"]
+                 "Nature du pouvoir", "Régime politique", "Superficie totale", "Plus haut point",
+                 "Date de naissance", "Lieu de naissance", "Date de décès", "Lieu de décès"]
 # Intertitres de fiche : ils séparent les rubriques mais ne sont pas des informations
 _FICHE_SECTIONS = ["Démographie", "Géographie", "Administration", "Localisation", "Liens", "Biographie",
                    "Histoire", "Caractéristiques", "Identifiants", "Fonctions", "Fonction", "Signature",
                    "Archives conservées par", "Blason", "Drapeau", "Économie", "Politique", "Chronologie",
-                   "Parlement", "Chambre haute", "Chambre basse", "Partie de", "Carrière", "Statistiques"]
+                   "Parlement", "Chambre haute", "Chambre basse", "Partie de", "Carrière", "Statistiques",
+                   "Famille"]
 _FICHE_RE = re.compile(r"(?<![\w'])(" + "|".join(sorted(map(re.escape, set(FICHE_LABELS + _FICHE_SECTIONS)),
                                                          key=len, reverse=True)) + r")(?![\w'])")
 
@@ -368,13 +370,18 @@ def clean_opening_text(title: str, text: str, max_chars: int = 1600) -> str:
     return " ".join(out).strip()
 
 
-def parse_fiche(title: str, auxiliary: list[str], max_lines: int = 14) -> list[str]:
-    """Lignes « Titre — Rubrique : valeur. » tirées du texte aplati de la fiche (infobox)."""
+def parse_fiche(title: str, auxiliary: list[str], max_lines: int = 16) -> list[str]:
+    """Lignes « Titre — Rubrique : valeur. » tirées du texte aplati des fiches (infobox).
+
+    Un article peut avoir plusieurs blocs (fiche principale, hymne et devise, légendes…) :
+    on lit d'abord les plus riches en rubriques et on les fusionne."""
+    blocks = []
     for block in auxiliary or []:
         matches = list(_FICHE_RE.finditer(block))
-        if len(matches) < 2:
-            continue  # légende d'image ou bandeau, pas une fiche
-        lines, seen = [], set()
+        if len(matches) >= 2:  # sinon : légende d'image ou bandeau, pas une fiche
+            blocks.append((sum(m.group(1) not in _FICHE_SECTIONS for m in matches), block, matches))
+    lines, seen = [], set()
+    for _, block, matches in sorted(blocks, key=lambda b: -b[0]):
         for current, following in zip(matches, matches[1:] + [None]):
             label = current.group(1)
             value = block[current.end(): following.start() if following else len(block)].strip(" :;,")
@@ -388,9 +395,8 @@ def parse_fiche(title: str, auxiliary: list[str], max_lines: int = 14) -> list[s
             seen.add(label)
             lines.append(f"{title} — {label} : {value.rstrip('.')}.")
             if len(lines) == max_lines:
-                break
-        return lines
-    return []
+                return lines
+    return lines
 
 
 def article_from_cirrus(doc: dict) -> tuple[str, str, float, tuple[str, ...]] | None:

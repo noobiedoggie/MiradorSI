@@ -87,10 +87,17 @@ def ask(message: str, mode: str, depth: int = 2, history_json: str = "[]") -> st
         quick = _agent.quick_reply(message)
         if quick:
             return json.dumps({"text": _app_wording(quick), "sources": []}, ensure_ascii=False)
-        if mode == "analyse":
-            return json.dumps(_analyse(message, int(depth)), ensure_ascii=False)
-        # hors ligne : outils, mémoire d'identité, puis bibliothèque (articles de Wikipédia)
         _agent.history = [tuple(pair) for pair in json.loads(history_json)][-4:]
+        if mode == "analyse":
+            from miradorsi.reasoning import resolve_follow_up
+
+            question = resolve_follow_up(message, _agent.history)  # « Et sa capitale ? »
+            reasoned = _agent.reason(question, online=True)        # âges, comparaisons, chaînes
+            if reasoned is not None:
+                text, report = reasoned
+                return json.dumps({"text": text, "sources": _sources(report, text)}, ensure_ascii=False)
+            return json.dumps(_analyse(question, int(depth)), ensure_ascii=False)
+        # hors ligne : outils, mémoire d'identité, raisonnement, puis bibliothèque (Wikipédia)
         text, report = _agent.offline_reply(message)
         return json.dumps({"text": _app_wording(text), "sources": _sources(report, text)}, ensure_ascii=False)
     except Exception as exc:  # l'application ne doit jamais planter sur une erreur Python
