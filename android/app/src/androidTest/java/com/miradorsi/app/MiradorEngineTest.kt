@@ -57,8 +57,11 @@ class MiradorEngineTest {
         assertTrue(engine.ask("connard", Mode.LOCAL, 1, emptyList()).text.startsWith("Je reste poli"))
         val perso = engine.ask("j'aime le caca et toi?", Mode.LOCAL, 1, emptyList()).text
         assertTrue(perso, perso.startsWith("Je suis une IA d'analyse"))
+        // mode de base sans la réponse sur le téléphone : recherche rapide sur internet si connecté,
+        // sinon réponse honnête qui renvoie vers le mode Analyse
         val inconnu = engine.ask("C'est quoi la photosynthèse ?", Mode.LOCAL, 1, emptyList()).text
-        assertTrue(inconnu, inconnu.contains("Analyse"))  // sans bibliothèque : réponse honnête
+        assertTrue(inconnu, !inconnu.startsWith("Désolé, une erreur"))
+        assertTrue(inconnu, inconnu.contains("photosynth", ignoreCase = true) || inconnu.contains("Analyse"))
     }
 
     @Test

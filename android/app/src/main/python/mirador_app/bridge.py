@@ -78,8 +78,9 @@ def _info(agent) -> dict:
     return info
 
 
-def ask(message: str, mode: str, depth: int = 2, history_json: str = "[]") -> str:
-    """mode = "analyse" (recherche sur internet) ou "local" (modèle embarqué, hors ligne)."""
+def ask(message: str, mode: str, depth: int = 2, history_json: str = "[]", online: bool = True) -> str:
+    """mode = "analyse" (analyse approfondie sur internet) ou "local" (mode de base : outils, modèle
+    embarqué et bibliothèque ; une recherche rapide sur internet si besoin et si `online`)."""
     if _agent is None:
         return json.dumps({"text": "Mirador SI démarre encore, réessaie dans un instant.", "sources": []})
     try:
@@ -97,8 +98,9 @@ def ask(message: str, mode: str, depth: int = 2, history_json: str = "[]") -> st
                 text, report = reasoned
                 return json.dumps({"text": text, "sources": _sources(report, text)}, ensure_ascii=False)
             return json.dumps(_analyse(question, int(depth)), ensure_ascii=False)
-        # hors ligne : outils, mémoire d'identité, raisonnement, puis bibliothèque (Wikipédia)
-        text, report = _agent.offline_reply(message)
+        # mode de base : outils, mémoire d'identité, raisonnement, bibliothèque (Wikipédia),
+        # puis recherche rapide sur internet quand le téléphone est connecté
+        text, report = _agent.offline_reply(message, online=bool(online))
         return json.dumps({"text": _app_wording(text), "sources": _sources(report, text)}, ensure_ascii=False)
     except Exception as exc:  # l'application ne doit jamais planter sur une erreur Python
         return json.dumps({"text": f"Désolé, une erreur est survenue : {exc}", "sources": []},

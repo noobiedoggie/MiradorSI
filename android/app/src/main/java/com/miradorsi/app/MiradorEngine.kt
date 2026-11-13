@@ -1,6 +1,8 @@
 package com.miradorsi.app
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
@@ -124,13 +126,23 @@ class MiradorEngine(context: Context) {
         }
     }
 
+    /** Le téléphone a-t-il internet ? Le mode de base ne cherche en ligne que dans ce cas. */
+    private fun enLigne(): Boolean = try {
+        val reseau = appContext.getSystemService(ConnectivityManager::class.java)
+        val capacites = reseau?.getNetworkCapabilities(reseau.activeNetwork)
+        capacites?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+    } catch (e: SecurityException) {
+        true
+    }
+
     suspend fun ask(message: String, mode: Mode, depth: Int, history: List<Pair<String, String>>): Reply =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val module = bridge ?: return@withLock Reply("Mirador SI n'a pas pu démarrer.", emptyList())
                 val past = JSONArray()
                 history.forEach { (question, answer) -> past.put(JSONArray().put(question).put(answer)) }
-                val json = JSONObject(module.callAttr("ask", message, mode.key, depth, past.toString()).toString())
+                val json = JSONObject(
+                    module.callAttr("ask", message, mode.key, depth, past.toString(), enLigne()).toString())
                 val sources = mutableListOf<Source>()
                 val array = json.optJSONArray("sources") ?: JSONArray()
                 for (i in 0 until array.length()) {

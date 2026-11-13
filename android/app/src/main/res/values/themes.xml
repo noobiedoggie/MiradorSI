@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="mirador_fond">#FF191A1A</color>
-    <color name="mirador_sarcelle">#FF3D6B73</color>
+    <color name="mirador_beige">#FFD8C4A2</color>
     <color name="mirador_orange">#FFE05A22</color>
 
     <style name="Theme.MiradorSI" parent="android:Theme.Material.NoActionBar">

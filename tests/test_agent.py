@@ -84,3 +84,23 @@ def test_offline_answers_are_reliable_or_honest(tmp_path):
     assert agent.handle("j'aime le caca et toi?") == PERSONAL_REPLY
     assert agent.handle("C'est quoi la photosynthèse ?") == OFFLINE_LIMIT  # sans bibliothèque ni internet
     assert "Mirador SI" in agent.handle("Qui es-tu ?")
+
+
+def test_base_mode_searches_online_only_when_connected(tmp_path):
+    from miradorsi.agent import OFFLINE_LIMIT, PERSONAL_REPLY
+
+    agent = make_agent(tmp_path)
+    question = "Quelle est la puissance solaire installée en France ?"
+    assert agent.offline_reply(question)[0].startswith("Mon réseau de neurones")  # pas connecté : honnête
+    text, report = agent.offline_reply(question, online=True)
+    assert "20 GW" in text and report.sources                                  # connecté : vraie réponse sourcée
+    assert agent.offline_reply("1+1", online=True)[0] == "1 + 1 = 2"            # les outils passent avant
+    assert agent.offline_reply("j'aime le caca et toi ?", online=True)[0] == PERSONAL_REPLY
+
+    class Down:
+        def search(self, *args, **kwargs):
+            raise OSError("pas de réseau")
+
+    agent.analyzer.search_engine = Down()
+    agent.brain = object()
+    assert agent.offline_reply(question, online=True)[0] == OFFLINE_LIMIT      # réseau coupé : pas de plantage

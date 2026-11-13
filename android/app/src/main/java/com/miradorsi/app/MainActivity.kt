@@ -11,22 +11,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -108,8 +98,7 @@ private val Carte = Color(0xFF202324)
 private val Bordure = Color(0xFF2C3133)
 private val Puce = Color(0xFF2A2F31)
 private val PuceActive = Color(0xFF131515)
-private val Sarcelle = Color(0xFF3D6B73)
-private val SarcelleClaire = Color(0xFF6FA3AC)
+private val BeigeFonce = Color(0xFFA8916E)
 private val Beige = Color(0xFFD8C4A2)
 private val FondBeige = Color(0xFF2B2722)
 private val Texte = Color(0xFFE9E9E6)
@@ -137,7 +126,7 @@ class MainActivity : ComponentActivity() {
         val engine = MiradorEngine(this)
         val store = ConversationStore(this)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(background = Fond, surface = Carte, primary = SarcelleClaire)) {
+            MaterialTheme(colorScheme = darkColorScheme(background = Fond, surface = Carte, primary = Beige)) {
                 MiradorApp(engine, store)
             }
         }
@@ -288,7 +277,7 @@ private fun MiradorApp(engine: MiradorEngine, store: ConversationStore) {
             },
             confirmButton = {
                 TextButton(onClick = { confirmerTelechargement = false; telechargerBibliotheque() }) {
-                    Text("Télécharger", color = SarcelleClaire)
+                    Text("Télécharger", color = Beige)
                 }
             },
             dismissButton = {
@@ -315,7 +304,8 @@ private fun Accueil(
         Bandeau(etat, onAPropos)
         BandeauHorsLigne(horsLigne, onHorsLigne)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            MiradorAnime(info?.name ?: "Mirador SI")
+            Image(remember { MiradorIcons.tower(BeigeFonce, Orange) }, contentDescription = info?.name ?: "Mirador SI",
+                modifier = Modifier.size(96.dp))
         }
         // toutes les conversations, avec défilement (il n'y a plus d'écran séparé)
         Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
@@ -323,45 +313,6 @@ private fun Accueil(
         }
         Spacer(Modifier.height(8.dp))
         composer()
-    }
-}
-
-/** Le mirador de l'accueil : un projecteur balaie le ciel depuis la tour, les fenêtres luisent. */
-@Composable
-private fun MiradorAnime(description: String) {
-    val transition = rememberInfiniteTransition(label = "mirador")
-    val angle by transition.animateFloat(
-        initialValue = -38f, targetValue = 38f, label = "projecteur",
-        animationSpec = infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-    )
-    val lueur by transition.animateFloat(
-        initialValue = 0.45f, targetValue = 1f, label = "fenetres",
-        animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-    )
-    val tour = remember { MiradorIcons.tower(Sarcelle, Orange) }
-    Box(Modifier.size(220.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.matchParentSize()) {
-            val icone = 96.dp.toPx()
-            val haut = (size.height - icone) / 2f
-            val source = Offset(size.width / 2f, haut + icone * 20f / 48f)  // les fenêtres de la tour
-            rotate(angle, pivot = source) {
-                val portee = size.height * 0.62f
-                val demi = portee * 0.30f
-                val faisceau = Path().apply {
-                    moveTo(source.x, source.y)
-                    lineTo(source.x - demi, source.y - portee)
-                    lineTo(source.x + demi, source.y - portee)
-                    close()
-                }
-                drawPath(faisceau, Brush.verticalGradient(
-                    listOf(Color.Transparent, Orange.copy(alpha = 0.10f + 0.12f * lueur)),
-                    startY = source.y - portee, endY = source.y,
-                ))
-            }
-            drawCircle(Brush.radialGradient(listOf(Orange.copy(alpha = 0.35f * lueur), Color.Transparent),
-                center = source, radius = icone * 0.32f), radius = icone * 0.32f, center = source)
-        }
-        Image(tour, contentDescription = description, modifier = Modifier.size(96.dp))
     }
 }
 
@@ -375,7 +326,7 @@ private fun BandeauHorsLigne(etat: HorsLigne, onClick: () -> Unit) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(if (etat is HorsLigne.Installee) MiradorIcons.Library else MiradorIcons.Download, null,
-                tint = if (etat is HorsLigne.Erreur) Orange else SarcelleClaire, modifier = Modifier.size(20.dp))
+                tint = if (etat is HorsLigne.Erreur) Orange else Beige, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(12.dp))
             val texte = when (etat) {
                 is HorsLigne.Absente -> "Bibliothèque hors ligne · Télécharger"
@@ -391,10 +342,10 @@ private fun BandeauHorsLigne(etat: HorsLigne, onClick: () -> Unit) {
         if (etat is HorsLigne.Telechargement) {
             Spacer(Modifier.height(8.dp))
             if (etat.total > 0) {
-                LinearProgressIndicator(progress = { etat.fait.toFloat() / etat.total }, color = SarcelleClaire,
+                LinearProgressIndicator(progress = { etat.fait.toFloat() / etat.total }, color = Beige,
                     trackColor = Bordure, modifier = Modifier.fillMaxWidth())
             } else {
-                LinearProgressIndicator(color = SarcelleClaire, trackColor = Bordure, modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(color = Beige, trackColor = Bordure, modifier = Modifier.fillMaxWidth())
             }
         }
     }
@@ -404,15 +355,15 @@ private fun BandeauHorsLigne(etat: HorsLigne, onClick: () -> Unit) {
 private fun Bandeau(etat: String, onClick: () -> Unit) {
     Row(
         Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().clip(RoundedCornerShape(24.dp))
-            .background(Brush.horizontalGradient(listOf(Color(0xFF243A3E), Color(0xFF1D2628))))
+            .background(Brush.horizontalGradient(listOf(Color(0xFF342E26), Color(0xFF25221E))))
             .clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Image(MiradorIcons.tower(SarcelleClaire, Orange), null, Modifier.size(24.dp))
+        Image(MiradorIcons.tower(Beige, Orange), null, Modifier.size(24.dp))
         Spacer(Modifier.width(12.dp))
-        Text(etat, color = SarcelleClaire, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        Text(etat, color = Beige, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f))
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = SarcelleClaire)
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Beige)
     }
 }
 
@@ -447,7 +398,7 @@ private fun Composer(
     onEnvoyer: () -> Unit, onDicter: () -> Unit, onNouvelle: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
-    val invite = if (mode == Mode.ANALYSE) "Que souhaitez-vous analyser ?" else "Discuter avec Mirador (hors ligne)…"
+    val invite = if (mode == Mode.ANALYSE) "Que souhaitez-vous analyser ?" else "Discuter avec Mirador…"
     Surface(
         shape = RoundedCornerShape(30.dp), color = Carte, border = BorderStroke(1.dp, Bordure),
         modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
@@ -456,7 +407,7 @@ private fun Composer(
             BasicTextField(
                 value = valeur, onValueChange = onValeur,
                 textStyle = TextStyle(color = Texte, fontSize = 18.sp),
-                cursorBrush = SolidColor(SarcelleClaire),
+                cursorBrush = SolidColor(Beige),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                 decorationBox = { champ ->
                     Box {
@@ -587,7 +538,7 @@ private fun Message(m: ChatMessage) {
     val liens = LocalUriHandler.current
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(MiradorIcons.tower(SarcelleClaire, Orange), null, Modifier.size(22.dp))
+            Image(MiradorIcons.tower(Beige, Orange), null, Modifier.size(22.dp))
             Spacer(Modifier.width(8.dp))
             Text("Mirador SI", color = Texte2, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
@@ -602,7 +553,7 @@ private fun Message(m: ChatMessage) {
                         .clickable { runCatching { liens.openUri(s.url) } }.padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("[${s.id}]", color = SarcelleClaire, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("[${s.id}]", color = Beige, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(s.title, color = Texte, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -625,7 +576,7 @@ private fun miseEnForme(texte: String): AnnotatedString = buildAnnotatedString {
         var debut = 0
         Regex("\\[\\d+]").findAll(ligne).forEach { renvoi ->
             append(ligne.substring(debut, renvoi.range.first))
-            withStyle(SpanStyle(color = SarcelleClaire, fontSize = 13.sp, fontWeight = FontWeight.Medium)) {
+            withStyle(SpanStyle(color = Beige, fontSize = 13.sp, fontWeight = FontWeight.Medium)) {
                 append(renvoi.value)
             }
             debut = renvoi.range.last + 1
@@ -637,7 +588,7 @@ private fun miseEnForme(texte: String): AnnotatedString = buildAnnotatedString {
 @Composable
 private fun EnCours(mode: Mode) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(Modifier.size(18.dp), color = SarcelleClaire, strokeWidth = 2.dp)
+        CircularProgressIndicator(Modifier.size(18.dp), color = Beige, strokeWidth = 2.dp)
         Spacer(Modifier.width(12.dp))
         Text(
             if (mode == Mode.ANALYSE) "Recherche, lecture et recoupement des sources…" else "Mirador réfléchit…",
@@ -652,7 +603,7 @@ private fun APropos(info: EngineInfo?, onFermer: () -> Unit) {
     AlertDialog(
         onDismissRequest = onFermer,
         confirmButton = { TextButton(onClick = onFermer) { Text("Fermer") } },
-        icon = { Image(MiradorIcons.tower(SarcelleClaire, Orange), null, Modifier.size(48.dp)) },
+        icon = { Image(MiradorIcons.tower(Beige, Orange), null, Modifier.size(48.dp)) },
         title = { Text(info?.let { "${it.name} ${it.version}" } ?: "Mirador SI") },
         text = {
             Column {

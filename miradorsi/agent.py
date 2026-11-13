@@ -273,10 +273,12 @@ class MiradorAgent:
     def chat(self, message: str) -> str:
         return self.offline_reply(message)[0]
 
-    def offline_reply(self, message: str) -> tuple[str, AnalysisReport | None]:
-        """Hors ligne. Le petit modèle embarqué ne comprend pas une question libre : plutôt que de
+    def offline_reply(self, message: str, online: bool = False) -> tuple[str, AnalysisReport | None]:
+        """Mode de base. Le petit modèle embarqué ne comprend pas une question libre : plutôt que de
         le laisser deviner, on répond par un outil, par la mémoire d'identité ou par la
-        bibliothèque hors ligne (articles de Wikipédia), et sinon on le dit honnêtement."""
+        bibliothèque hors ligne (articles de Wikipédia). Si rien ne répond et que le téléphone est
+        connecté (`online`), une recherche rapide sur internet rédige une vraie réponse sourcée ;
+        sinon on le dit honnêtement."""
         quick = self.quick_reply(message)
         if quick:
             return quick, None
@@ -295,12 +297,30 @@ class MiradorAgent:
         report = self.library_answer(message)
         if report is not None:
             return compose_answer(report, offline=True), report
+        if online and content_terms(strip_idioms(message)):
+            found = self.online_answer(message)
+            if found is not None:
+                return found
         if self.library is not None:
             return NOT_IN_LIBRARY, None
         if self.brain is None:
             return ("Mon réseau de neurones n'est pas encore entraîné (lance `mirador train`). "
                     "Je peux déjà analyser n'importe quel sujet : /analyse <ta question>"), None
         return OFFLINE_LIMIT, None
+
+    def online_answer(self, question: str) -> tuple[str, AnalysisReport] | None:
+        """Recherche rapide (profondeur 1) pour le mode de base : raisonnement sur les fiches en ligne,
+        puis analyse des sources. None sans connexion ou si rien de pertinent n'est trouvé."""
+        try:
+            reasoned = self.reason(question, online=True)
+            if reasoned is not None:
+                return reasoned
+            report = self.analyzer.analyze(question, 1)
+        except (WebError, OSError):
+            return None
+        if not report.findings:
+            return None
+        return compose_answer(report), report
 
     def reason(self, question: str, online: bool) -> tuple[str, AnalysisReport] | None:
         """Raisonnement en étapes (âges, comparaisons, questions en chaîne) à partir des fiches :
